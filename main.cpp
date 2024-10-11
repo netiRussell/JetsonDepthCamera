@@ -1,5 +1,7 @@
 /*
     Goal: Find coordinates of all the objects that are closer to the camera than the distance d
+
+    Next step: Make some kind of a flag for an object to find just the coordinates of that object 
 */
 
 #include <depthai/depthai.hpp>
