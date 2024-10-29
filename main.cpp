@@ -47,7 +47,15 @@ int main() {
 
     // Retrieve calibration data
     auto calibData = device.readCalibration();
-    auto intrinsics = calibData.getCameraIntrinsics(dai::CameraBoardSocket::CAM_C);
+
+    // Get depth frame
+    auto depthFrame = depthQueue->get<dai::ImgFrame>();
+    cv::Mat depthImage = depthFrame->getFrame();
+    // Get the resolution
+    int width = depthImage.cols;
+    int height = depthImage.rows;
+    
+    auto intrinsics = calibData.getCameraIntrinsics(dai::CameraBoardSocket::RIGHT, width, height, true);
 
     // Extract intrinsic parameters
     float fx = intrinsics[0][0];
@@ -133,8 +141,11 @@ int main() {
                     if (depthValue == 0)
                         continue; // If still zero, skip the point
                 }
+                
+                // Adjust depth value based on extended disparity
+                float adjustedDepthValue = static_cast<float>(depthValue) / 2.0f; // Divide by 2 due to extended disparity
 
-                float Z = static_cast<float>(depthValue) / 1000.0f; // Convert mm to meters
+                float Z = adjustedDepthValue / 1000.0f; // Convert mm to meters
                 float X = (x - cx) * Z / fx;
                 float Y = (y - cy) * Z / fy;
 
@@ -171,7 +182,7 @@ int main() {
 
 
 ushort interpolateDepth(const cv::Mat& depthImage, int x, int y) {
-    int neighborhoodSize = 3;
+    int neighborhoodSize = 5;
     int count = 0;
     int sum = 0;
 
