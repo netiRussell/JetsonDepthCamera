@@ -136,13 +136,15 @@ int main() {
         }
 
         // Display image
-        cv::imshow("Convex Hulls", displayImage);
+        //cv::imshow("Convex Hulls", displayImage);
 
         // Analyze and clear the hulls that don't represent real objects
         if( i == nCaptPerAnalysis-1 ){
 
             // Check if the hull represents a real object
             for (size_t j = 0; j < netHulls.size(); j++) {
+
+                std::cout << "Hull " << j << ": Centroid = (" << netHulls[j].coordinates.first << ", " << netHulls[j].coordinates.second << ")" << std::endl;
 
                 // Make sure the hull hasn't been recognized yet
                 if( netHulls[j].isRealObject == true ){
@@ -160,7 +162,7 @@ int main() {
 
                     // Make sure the area and the coordinates are similar
                     // ! TODO: play with the number to increase precision
-                    if( fabs(netHulls[j].area - netHulls[k].area) < 200 && (fabs(netHulls[j].coordinates.first - netHulls[k].coordinates.first) <= 20 && fabs(netHulls[j].coordinates.second - netHulls[k].coordinates.second) <= 20) ){
+                    if( fabs(netHulls[j].area - netHulls[k].area) < 200 && (fabs(netHulls[j].coordinates.first - netHulls[k].coordinates.first) <= 10 && fabs(netHulls[j].coordinates.second - netHulls[k].coordinates.second) <= 10) ){
                         netHulls[j].isRealObject = true;
                         netHulls[k].isRealObject = true;
                     }
@@ -173,12 +175,16 @@ int main() {
             // Calculate coordinates for visualization
             std::vector< std::vector< std::array<float, 5> > > gatheredHulls;
 
+            int counter = 0;
             for (size_t j = 0; j < netHulls.size(); j++) {
 
                 // Make sure the hull is recognized
                 if( netHulls[j].isRealObject == false ){
                         continue;
                 }
+
+                counter++;
+                std::cout << "One more is correct. Counter: " << counter;
 
                 std::vector< std::array<float, 5> > points; // Points of a single convex hull
 
