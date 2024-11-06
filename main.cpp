@@ -167,10 +167,50 @@ int main() {
 
                 }
 
-
-
-                std::cout << "Hull " << j << ": Centroid = (" << netHulls[j].coordinates.first << ", " << netHulls[j].coordinates.second << ")" << std::endl;
             }
+
+
+            // Calculate coordinates for visualization
+            std::vector< std::vector< std::array<float, 5> > > gatheredHulls;
+
+            for (size_t j = 0; j < netHulls.size(); j++) {
+
+                // Make sure the hull is recognized
+                if( netHulls[j].isRealObject == false ){
+                        continue;
+                }
+
+                std::vector< std::array<float, 5> > points; // Points of a single convex hull
+
+                for (const auto& point : netHulls[j].hull) {
+                    int x = point.x;
+                    int y = point.y;
+
+                    ushort depthValue = depthImage.at<ushort>(y, x); // ! TODO: isn't reachable in this scope
+
+                    if (depthValue == 0){
+                        // Try to interpolate depth from neighboring pixels
+                        depthValue = interpolateDepth(depthImage, x, y);
+
+                        if (depthValue == 0)
+                            continue; // If still zero, skip the point
+                    }
+
+                    // Adjust depth value based on extended disparity
+                    float adjustedDepthValue = static_cast<float>(depthValue) / 1.0f; // Divide by 2 due to extended disparity
+
+                    float Z = adjustedDepthValue / 1000.0f; // Convert mm to meters
+                    float X = (x - cx) * Z / fx;
+                    float Y = (y - cy) * Z / fy;
+
+                    points.push_back({X, Y, Z, cx, cy});
+                }
+
+                gatheredHulls.push_back(points);
+
+            }
+
+            printCaptures(gatheredHulls);
 
             // To restart the loop:
             // i = 1;
@@ -179,48 +219,6 @@ int main() {
 
         i++;
     }
-
-    // Calculate coordinates for visualization
-    std::vector< std::vector< std::array<float, 5> > > gatheredHulls;
-
-    for (size_t i = 0; i < netHulls.size(); i++) {
-
-        // Make sure the hull is recognized
-        if( netHulls[i].isRealObject == false ){
-                continue;
-        }
-
-        std::vector< std::array<float, 5> > points; // Points of a single convex hull
-
-        for (const auto& point : netHulls[i].hull) {
-            int x = point.x;
-            int y = point.y;
-
-            ushort depthValue = depthImage.at<ushort>(y, x); // ! TODO: isn't reachable in this scope
-
-            if (depthValue == 0){
-                // Try to interpolate depth from neighboring pixels
-                depthValue = interpolateDepth(depthImage, x, y);
-
-                if (depthValue == 0)
-                    continue; // If still zero, skip the point
-            }
-
-            // Adjust depth value based on extended disparity
-            float adjustedDepthValue = static_cast<float>(depthValue) / 1.0f; // Divide by 2 due to extended disparity
-
-            float Z = adjustedDepthValue / 1000.0f; // Convert mm to meters
-            float X = (x - cx) * Z / fx;
-            float Y = (y - cy) * Z / fy;
-
-            points.push_back({X, Y, Z, cx, cy});
-        }
-
-        gatheredHulls.push_back(points);
-
-    }
-
-    printCaptures(gatheredHulls);
 
     cv::waitKey(100); // Wait briefly (100 ms) to allow resources to close
     cv::destroyAllWindows(); // Explicitly close all OpenCV windows
