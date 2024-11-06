@@ -1,11 +1,12 @@
-#include <iostream>
+﻿#include <iostream>
 #include <depthai/depthai.hpp>
 #include <opencv2/opencv.hpp>
+#include <cmath>
 
 ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
-void printCaptures( const std::vector< std::vector< std::vector< std::array<float, 3> > > >& gatheredCaptures  );
+void printCaptures( const std::vector< std::vector< std::array<float, 5> > >& gatheredCaptures  );
 cv::Point2f projectPoint(const cv::Point3f& point, float focalLength, const cv::Point2f& center);
-void graphPoints( std::vector< std::array<float, 3> > hull );
+void graphPoints( std::vector< std::array<float, 5> > hull );
 
 int main() {
     // Create pipeline
@@ -47,15 +48,7 @@ int main() {
 
     // Retrieve calibration data
     auto calibData = device.readCalibration();
-
-    // Get depth frame
-    auto depthFrame = depthQueue->get<dai::ImgFrame>();
-    cv::Mat depthImage = depthFrame->getFrame();
-    // Get the resolution
-    int width = depthImage.cols;
-    int height = depthImage.rows;
-    
-    auto intrinsics = calibData.getCameraIntrinsics(dai::CameraBoardSocket::RIGHT, width, height, true);
+    auto intrinsics = calibData.getCameraIntrinsics(dai::CameraBoardSocket::CAM_C, 1280, 720);
 
     // Extract intrinsic parameters
     float fx = intrinsics[0][0];
@@ -65,20 +58,20 @@ int main() {
 
     // Depth thresholds in millimeters
     int minDepth = 500;  // 0.5 meters
-    int maxDepth = 800; //
+    int maxDepth = 800; // 0.8 meters
+
+    struct HullData {
+        std::vector<cv::Point> hull;
+        bool isRealObject;
+        double area;
+        std::pair<double, double> coordinates;
+    };
+
 
     int i = 1;
-    /*
-     * gatheredCaptures - vector that holds all the captures from the while loop.
-     * Each Capture holds all convex hulls found in the capture
-     * Each Hull holds its coordinates calculated in the most inner for-loop
-     *
-     * Shape = # of captures, # of convex hulls, # of coordinates, 3 coordinatex - X, Y, Z.
-    */
-    std::vector< std::vector< std::vector< std::array<float, 3> > > > gatheredCaptures;
-    while (i <= 20) {
-        std::cout << "Capture #" << i << "\n";
-
+    int nCaptPerAnalysis = 40;
+    std::vector<HullData> netHulls;
+    while (i <= nCaptPerAnalysis) {
         // Get depth frame
         auto depthFrame = depthQueue->get<dai::ImgFrame>();
         cv::Mat depthImage = depthFrame->getFrame();
@@ -87,16 +80,12 @@ int main() {
         cv::Mat mask;
         cv::inRange(depthImage, minDepth, maxDepth, mask);
 
-
-        /* AT THIS STEP THE DEPTH IS CORRECT*/
-
-
         // Noise reduction
-        cv::erode(mask, mask, cv::Mat(), cv::Point(-1, -1), 2);
-        cv::dilate(mask, mask, cv::Mat(), cv::Point(-1, -1), 2);
+        //cv::erode(mask, mask, cv::Mat(), cv::Point(-1, -1), 2);
+        //cv::dilate(mask, mask, cv::Mat(), cv::Point(-1, -1), 2);
 
         // Blur
-        cv::GaussianBlur(mask, mask, cv::Size(9, 9), 5);
+        //cv::GaussianBlur(mask, mask, cv::Size(9, 9), 5);
 
 
         // Find contours in the mask
@@ -111,68 +100,127 @@ int main() {
 
         // Create an image to display
         cv::Mat displayImage;
-        cv::normalize(depthImage, displayImage, 0, 255, cv::NORM_MINMAX, CV_8UC1);
-        cv::cvtColor(displayImage, displayImage, cv::COLOR_GRAY2BGR);
+        cv::normalize(depthImage, displayImage, 255, 0, cv::NORM_INF, CV_8UC1);
+        cv::equalizeHist(displayImage, displayImage);
+        cv::applyColorMap(displayImage, displayImage, cv::COLORMAP_HOT);
 
         // Draw convex hulls on the image
         for (size_t i = 0; i < hulls.size(); i++) {
             cv::drawContours(displayImage, hulls, static_cast<int>(i), cv::Scalar(0, 255, 0), 2);
         }
 
-
-        // For each convex hull, compute and print 3D coordinates
-        std::vector< std::vector< std::array<float, 3> > > gatheredHulls; // Vector that stores hulls of current capture
-
+        // Filter out noise
         for (size_t i = 0; i < hulls.size(); i++) {
 
-            std::cout << "Convex Hull " << i << ":" << std::endl;
-            std::vector< std::array<float, 3> > points; // Points of a single convex hull
+            std::vector< std::array<float, 5> > points; // Points of a single convex hull
 
-            for (const auto& point : hulls[i]) {
-                int x = point.x;
-                int y = point.y;
-
-                ushort depthValue = depthImage.at<ushort>(y, x);
-
-                if (depthValue == 0){
-                    // Try to interpolate depth from neighboring pixels
-                    depthValue = interpolateDepth(depthImage, x, y);
-
-                    if (depthValue == 0)
-                        continue; // If still zero, skip the point
-                }
-                
-                // Adjust depth value based on extended disparity
-                float adjustedDepthValue = static_cast<float>(depthValue) / 2.0f; // Divide by 2 due to extended disparity
-
-                float Z = adjustedDepthValue / 1000.0f; // Convert mm to meters
-                float X = (x - cx) * Z / fx;
-                float Y = (y - cy) * Z / fy;
-
-                points.push_back({X, Y, Z});
-
-                // Output coordinates
-                //std::cout << "Point: X=" << X << "m, Y=" << Y << "m, Z=" << Z << "m" << std::endl;
+            // Compute area in pixels and skip if the captured hull is just a noise
+            double area = cv::contourArea(hulls[i]);
+            if( area < 500 ){
+                continue;
             }
 
-            gatheredHulls.push_back(points);
-        }
 
-        gatheredCaptures.push_back(gatheredHulls);
+            // Initialize the hull for further analysis
+            HullData newHullData;
+            newHullData.hull = hulls[i];          // Assign the vector of points
+            newHullData.isRealObject = false;     // Set the flag
+            newHullData.area = area;        	  // Set the area
+
+            // Calculate the coordinates
+            cv::Moments mu = cv::moments(hulls[i]);
+            newHullData.coordinates = std::make_pair(mu.m10 / mu.m00, mu.m01 / mu.m00); // x, y
+
+            netHulls.push_back(newHullData);
+
+        }
 
         // Display image
         cv::imshow("Convex Hulls", displayImage);
 
-        // Exit loop if 'q' is pressed
-        if (cv::waitKey(1) == 'q') {
-            break;
+        // Analyze and clear the hulls that don't represent real objects
+        if( i == nCaptPerAnalysis-1 ){
+
+            // Check if the hull represents a real object
+            for (size_t j = 0; j < netHulls.size(); j++) {
+
+                // Make sure the hull hasn't been recognized yet
+                if( netHulls[j].isRealObject == true ){
+                        continue;
+                }
+
+
+                // Check on other hulls
+                for (size_t k = j; k < netHulls.size(); k++) {
+
+                    // Make sure the hull hasn't been recognized yet
+                    if( netHulls[k].isRealObject == true ){
+                            continue;
+                    }
+
+                    // Make sure the area and the coordinates are similar
+                    // ! TODO: play with the number to increase precision
+                    if( fabs(netHulls[j].area - netHulls[k].area) < 200 && (fabs(netHulls[j].coordinates.first - netHulls[k].coordinates.first) <= 20 && fabs(netHulls[j].coordinates.second - netHulls[k].coordinates.second) <= 20) ){
+                        netHulls[j].isRealObject = true;
+                        netHulls[k].isRealObject = true;
+                    }
+
+                }
+
+
+
+                std::cout << "Hull " << j << ": Centroid = (" << netHulls[j].coordinates.first << ", " << netHulls[j].coordinates.second << ")" << std::endl;
+            }
+
+            // To restart the loop:
+            // i = 1;
+            // Clear the netHulls vector
         }
 
         i++;
     }
 
-    // Print Captures
-    printCaptures( gatheredCaptures );
+    // Calculate coordinates for visualization
+    std::vector< std::vector< std::array<float, 5> > > gatheredHulls;
+
+    for (size_t i = 0; i < netHulls.size(); i++) {
+
+        // Make sure the hull is recognized
+        if( netHulls[i].isRealObject == false ){
+                continue;
+        }
+
+        std::vector< std::array<float, 5> > points; // Points of a single convex hull
+
+        for (const auto& point : netHulls[i].hull) {
+            int x = point.x;
+            int y = point.y;
+
+            ushort depthValue = depthImage.at<ushort>(y, x); // ! TODO: isn't reachable in this scope
+
+            if (depthValue == 0){
+                // Try to interpolate depth from neighboring pixels
+                depthValue = interpolateDepth(depthImage, x, y);
+
+                if (depthValue == 0)
+                    continue; // If still zero, skip the point
+            }
+
+            // Adjust depth value based on extended disparity
+            float adjustedDepthValue = static_cast<float>(depthValue) / 1.0f; // Divide by 2 due to extended disparity
+
+            float Z = adjustedDepthValue / 1000.0f; // Convert mm to meters
+            float X = (x - cx) * Z / fx;
+            float Y = (y - cy) * Z / fy;
+
+            points.push_back({X, Y, Z, cx, cy});
+        }
+
+        gatheredHulls.push_back(points);
+
+    }
+
+    printCaptures(gatheredHulls);
 
     cv::waitKey(100); // Wait briefly (100 ms) to allow resources to close
     cv::destroyAllWindows(); // Explicitly close all OpenCV windows
@@ -208,49 +256,42 @@ ushort interpolateDepth(const cv::Mat& depthImage, int x, int y) {
 }
 
 
-void printCaptures( const std::vector< std::vector< std::vector< std::array<float, 3> > > >& gatheredCaptures  ){
-    // Shape of gatheredCaptures = # of captures, # of convex hulls, # of coordinates, 3 coordinatex - X, Y, Z.
+void printCaptures( const std::vector< std::vector< std::array<float, 5> > >& gatheredHulls  ){
+    // Shape of gatheredCaptures = # of captures, # of convex hulls, # of coordinates, 5 coordinatex - X, Y, Z, cx, cy.
     std::cout << "\n------------------------------------------------------------------------\n";
 
-    for( int i = 0; i < gatheredCaptures.size(); i++ ){
-        std::cout << "Capture #" << i << " | Size = " << gatheredCaptures[i].size() << "\n";
+    for( std::vector< std::array<float, 5> > hull : gatheredHulls ){
+        std::cout << "\tCurrent Convex Hull size = " << hull.size() << "\n";
 
-        for( std::vector< std::array<float, 3> > hull : gatheredCaptures[i] ){
-            std::cout << "\tCurrent Convex Hull size = " << hull.size() << "\n";
-
-            for( std::array<float, 3> coordinates : hull ){
+        for( std::array<float, 5> coordinates : hull ){
                 std::cout << "\t\tPoint: X=" << coordinates[0] << "m, Y=" << coordinates[1] << "m, Z=" << coordinates[2] << "m" << std::endl;
-            }
-
-            graphPoints(hull);
-            std::cout << "\n";
         }
 
-        std::cout << "\n\n";
+        graphPoints(hull);
+        std::cout << "\n";
     }
 
     std::cout << std::endl;
 }
 
 
-cv::Point2f projectPoint(const std::array<float, 3>& point, float focalLength, const cv::Point2f& center) {
-    float x = focalLength * (point[0] / point[2]) + center.x;
-    float y = focalLength * (point[1] / point[2]) + center.y;
+cv::Point2f projectPoint(const std::array<float, 5>& point, const cv::Point2f& center) {
+    float x = point[3] * (point[0] / point[2]) + center.x;
+    float y = point[4] * (point[1] / point[2]) + center.y;
     return cv::Point2f(x, y);
 }
 
 
-void graphPoints( std::vector< std::array<float, 3> > hull ){
+void graphPoints( std::vector< std::array<float, 5> > hull ){
     // Set up the display window and projection parameters
-    int width = 600, height = 400;
+    int width = 1280, height = 720;
     cv::Mat image = cv::Mat::zeros(height, width, CV_8UC3);
-    float focalLength = 500.0;  // Adjust focal length to control "zoom"
     cv::Point2f center(width / 2, height / 2);  // Center of the 2D plane
 
     // Draw each 3D point on the 2D image
-    for (const std::array<float, 3>& point : hull) {
+    for (const std::array<float, 5>& point : hull) {
         // Project the 3D point onto the 2D image plane
-        cv::Point2f pt2D = projectPoint(point, focalLength, center);
+        cv::Point2f pt2D = projectPoint(point, center);
 
         // Scale the circle size based on the Z coordinate to simulate depth
         int radius = static_cast<int>(10 / point[2]);  // Adjust size based on depth
@@ -258,6 +299,10 @@ void graphPoints( std::vector< std::array<float, 3> > hull ){
 
         // Draw the projected point as a circle on the 2D plane
         cv::circle(image, pt2D, radius, color, -1);  // -1 fills the circle
+
+        // Put the text on the image
+        std::string text = std::to_string(point[0]) + ", " + std::to_string(point[1]) + ", " + std::to_string(point[2]);
+        cv::putText(image, text, pt2D, cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 255), 0.75);
     }
 
     // Display the result
