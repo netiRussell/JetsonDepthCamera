@@ -290,6 +290,11 @@ void analyzeCaptures( const std::vector< std::vector< std::array<float, 5> > >& 
                 // ! TODO: avgZ doesn't show seem to be reflected
                 coordinates[2] = avgZ;
         }
+        
+        // TODO: to be deleted. this is just for debugging.
+        for( std::array<float, 5> coordinates : hull ){
+                std::cout << "\t\tPoint: X=" << coordinates[0] << "m, Y=" << coordinates[1] << "m, Z=" << coordinates[2] << "m" << std::endl;
+        }
 
         graphPoints(hull);
         std::cout << "\n";
@@ -326,7 +331,7 @@ void graphPoints( std::vector< std::array<float, 5> > hull ){
 
         // Put the text on the image
         std::string text = std::to_string(point[0]) + ", " + std::to_string(point[1]) + ", " + std::to_string(point[2]);
-        cv::putText(image, text, pt2D, cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 255), 0.75);
+        cv::putText(image, text, pt2D, cv::FONT_HERSHEY_SIMPLEX, 0.3, cv::Scalar(0, 0, 255), 0.75);
     }
 
     // Display the result
