@@ -4,7 +4,7 @@
 #include <cmath>
 
 ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
-void analyzeCaptures( const std::vector< std::vector< std::array<float, 5> > >& gatheredCaptures, int minDepth, int maxDepth );
+void analyzeCaptures( const std::vector< std::vector< std::array<float, 5> > >& gatheredCaptures );
 cv::Point2f projectPoint(const cv::Point3f& point, float focalLength, const cv::Point2f& center);
 void graphPoints( std::vector< std::array<float, 5> > hull );
 
@@ -144,13 +144,6 @@ int main() {
             // Check if the hull represents a real object
             for (size_t j = 0; j < netHulls.size(); j++) {
 
-
-                // Make sure the hull hasn't been recognized yet
-                if( netHulls[j].isRealObject == true ){
-                        continue;
-                }
-
-
                 // Check on other hulls
                 std::cout << "Current Area = " << netHulls[j].area << std::endl;
                 for (size_t k = j+1; k < netHulls.size(); k++) {
@@ -162,7 +155,7 @@ int main() {
 
                     // Make sure the area and the coordinates are similar
                     // ! TODO: play with the number to increase precision
-                    if( fabs(netHulls[j].area - netHulls[k].area) <= 200 && (fabs(netHulls[j].coordinates.first - netHulls[k].coordinates.first) <= 0.5 && fabs(netHulls[j].coordinates.second - netHulls[k].coordinates.second) <= 0.5) ){
+                    if( fabs(netHulls[j].area - netHulls[k].area) <= 100 && (fabs(netHulls[j].coordinates.first - netHulls[k].coordinates.first) <= 0.5 && fabs(netHulls[j].coordinates.second - netHulls[k].coordinates.second) <= 0.5) ){
                         netHulls[j].isRealObject = true;
                         netHulls[k].isRealObject = true;
 
@@ -218,7 +211,7 @@ int main() {
 
             }
 
-            analyzeCaptures(gatheredHulls, minDepth, maxDepth);
+            analyzeCaptures(gatheredHulls);
 
             // To restart the loop:
             // i = 1;
@@ -262,39 +255,19 @@ ushort interpolateDepth(const cv::Mat& depthImage, int x, int y) {
 }
 
 
-void analyzeCaptures( const std::vector< std::vector< std::array<float, 5> > >& gatheredHulls, int minDepth, int maxDepth ){
+void analyzeCaptures( const std::vector< std::vector< std::array<float, 5> > >& gatheredHulls ){
     // Shape of gatheredCaptures = # of captures, # of convex hulls, # of coordinates, 5 coordinatex - X, Y, Z, cx, cy.
     std::cout << "\n------------------------------------------------------------------------\n";
 
     for( std::vector< std::array<float, 5> > hull : gatheredHulls ){
         std::cout << "\tCurrent Convex Hull size = " << hull.size() << "\n";
 
-        int avgZ = 0;
-
         std::cout << "size " << hull.size();
 
         for( std::array<float, 5> coordinates : hull ){
                 std::cout << "\t\tPoint: X=" << coordinates[0] << "m, Y=" << coordinates[1] << "m, Z=" << coordinates[2] << "m" << std::endl;
-
-                if( coordinates[2] > maxDepth || coordinates[2] < minDepth ){
-                    continue;
-                }
-
-                avgZ += coordinates[2];
         }
 
-        avgZ /= hull.size();
-
-        // ! TODO: inefficient, change this logic:
-        for( std::array<float, 5> coordinates : hull ){
-                // ! TODO: avgZ doesn't show seem to be reflected
-                coordinates[2] = avgZ;
-        }
-        
-        // TODO: to be deleted. this is just for debugging.
-        for( std::array<float, 5> coordinates : hull ){
-                std::cout << "\t\tPoint: X=" << coordinates[0] << "m, Y=" << coordinates[1] << "m, Z=" << coordinates[2] << "m" << std::endl;
-        }
 
         graphPoints(hull);
         std::cout << "\n";
