@@ -4,7 +4,7 @@
 #include <cmath>
 
 ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
-void analyzeCaptures( const std::vector< std::vector< std::array<float, 5> > >& gatheredCaptures );
+void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints );
 cv::Point2f projectPoint(const cv::Point3f& point, float focalLength, const cv::Point2f& center);
 void graphPoints( std::vector< std::array<float, 5> > hull );
 
@@ -168,10 +168,10 @@ int main() {
             }
 
 
-            // Calculate coordinates for visualization
-            std::vector< std::vector< std::array<float, 5> > > gatheredHulls;
+            // ! TODO: change the structure to have all of the coordinates in a single capture
+            // Filter out coordinates for visualization
+            std::vector< std::array<float, 5> > points;
 
-            int counter = 0;
             for (int j = 0; j < netHulls.size(); j++) {
 
                 // Make sure the hull is recognized
@@ -179,19 +179,11 @@ int main() {
                         continue;
                 }
 
-                counter++;
-                //std::cout << "One more is correct. Counter: " << counter << std::endl;
-                //std::cout << "Hull " << j << ": Centroid = (" << netHulls[j].coordinates.first << ", " << netHulls[j].coordinates.second << ")" << std::endl;
-
-                std::vector< std::array<float, 5> > points; // Points of a single convex hull
-
                 for (const auto& point : netHulls[j].hull) {
                     int x = point.x;
                     int y = point.y;
 
                     ushort depthValue = depthImage.at<ushort>(y, x);
-
-                    // TODO: additional condition - make sure Z is within the threshold of min and max depth
                     if (depthValue == 0){
                         // Try to interpolate depth from neighboring pixels
                         depthValue = interpolateDepth(depthImage, x, y);
@@ -207,11 +199,9 @@ int main() {
                     points.push_back({X, Y, Z, cx, cy});
                 }
 
-                gatheredHulls.push_back(points);
-
             }
 
-            analyzeCaptures(gatheredHulls);
+            analyzeCaptures(points);
 
             // To restart the loop:
             // i = 1;
@@ -255,36 +245,31 @@ ushort interpolateDepth(const cv::Mat& depthImage, int x, int y) {
 }
 
 
-void analyzeCaptures( const std::vector< std::vector< std::array<float, 5> > >& gatheredHulls ){
+void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints ){
     // Shape of gatheredCaptures = # of captures, # of convex hulls, # of coordinates, 5 coordinatex - X, Y, Z, cx, cy.
     std::cout << "\n------------------------------------------------------------------------\n";
 
-    // Let's find the capture with the largest # of vertices
-    int dummyCounter = 0;
-    int largestID = 0;
-    for( int i = 0; i < gatheredHulls.size(); i++ ){
-        if(gatheredHulls[i].size() > dummyCounter){
-            dummyCounter = gatheredHulls[i].size();
-            largestID = i;
-        }
-    }
+    /*
+        Logic:
+            1) Start with the first capture ✅
+            2) Union(combine) all of the coordinates into a single set ✅
+            3) Find a convex hull of the resulted set
+    */ 
 
     // Main loop of the function
-    for( int i = 0; i < gatheredHulls.size(); i++ ){
-        std::cout << "\tCurrent Convex Hull size = " << gatheredHulls[i].size() << "\n";
+    std::cout << "\tCurrent Convex Hull size = " << gatheredPoints.size() << "\n";
 
-        if(i == largestID){
-            std::cout << "!!! This is the largest one !!!" << "\n";
-        }
-
-        for( const std::array<float, 5> &coordinates : gatheredHulls[i] ){
-                std::cout << "\t\tPoint: X=" << coordinates[0] << "m, Y=" << coordinates[1] << "m, Z=" << coordinates[2] << "m" << std::endl;
-        }
-
-
-        graphPoints(gatheredHulls[i]);
-        std::cout << "\n";
+    for( const std::array<float, 5> &coordinates : gatheredPoints ){
+            std::cout << "\t\tPoint: X=" << coordinates[0] << "m, Y=" << coordinates[1] << "m, Z=" << coordinates[2] << "m" << std::endl;
     }
+
+
+    graphPoints(gatheredPoints);
+    std::cout << "\n";
+
+    // TODO: Make sure the code runs
+    // TODO: find the convex hull
+    // TODO: graph and output in the terminal resulted coordinates
 
     std::cout << std::endl;
 }
