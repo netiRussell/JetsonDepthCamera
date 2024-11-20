@@ -259,17 +259,30 @@ void analyzeCaptures( const std::vector< std::vector< std::array<float, 5> > >& 
     // Shape of gatheredCaptures = # of captures, # of convex hulls, # of coordinates, 5 coordinatex - X, Y, Z, cx, cy.
     std::cout << "\n------------------------------------------------------------------------\n";
 
-    for( std::vector< std::array<float, 5> > hull : gatheredHulls ){
-        std::cout << "\tCurrent Convex Hull size = " << hull.size() << "\n";
+    // Let's find the capture with the largest # of vertices
+    int dummyCounter = 0;
+    int largestID = 0;
+    for( int i = 0; i < gatheredHulls.size(); i++ ){
+        if(gatheredHulls[i].size() > dummyCounter){
+            dummyCounter = gatheredHulls[i].size();
+            largestID = i;
+        }
+    }
 
-        std::cout << "size " << hull.size();
+    // Main loop of the function
+    for( int i = 0; i < gatheredHulls.size(); i++ ){
+        std::cout << "\tCurrent Convex Hull size = " << gatheredHulls[i].size() << "\n";
 
-        for( std::array<float, 5> coordinates : hull ){
+        if(i == largestID){
+            std::cout << "!!! This is the largest one !!!" << "\n";
+        }
+
+        for( const std::array<float, 5> &coordinates : gatheredHulls[i] ){
                 std::cout << "\t\tPoint: X=" << coordinates[0] << "m, Y=" << coordinates[1] << "m, Z=" << coordinates[2] << "m" << std::endl;
         }
 
 
-        graphPoints(hull);
+        graphPoints(gatheredHulls[i]);
         std::cout << "\n";
     }
 
