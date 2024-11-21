@@ -7,6 +7,7 @@ ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
 void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints );
 cv::Point2f projectPoint(const cv::Point3f& point, float focalLength, const cv::Point2f& center);
 void graphPoints( std::vector< std::array<float, 5> > hull );
+std::vector<std::array<float, 2>> transformPoints(const std::vector<std::array<float, 5>>& points);
 
 int main() {
     // Create pipeline
@@ -268,7 +269,17 @@ void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints 
     std::cout << "\n";
 
     // TODO: Make sure the code runs
+
     // TODO: find the convex hull
+    // Compute the final convex hull
+    std::vector<cv::Point> finalHull(gatheredPoints.size());
+    std::vector<std::array<float, 2>> points2d = transformPoints(gatheredPoints);
+    cv::convexHull(points2d, finalHull);
+
+    // TODO: transform the resulted convexHull 2d points back into 3d
+    // if convexHull only filters out existing vertices, then simply map the gatheredPoints to delete filtered out vertices.
+    // to delete an element from std::vector, use std::vector.erase(...)
+
     // TODO: graph and output in the terminal resulted coordinates
 
     std::cout << std::endl;
@@ -308,4 +319,15 @@ void graphPoints( std::vector< std::array<float, 5> > hull ){
     // Display the result
     cv::imshow("3D Points Projection", image);
     cv::waitKey(0);
+}
+
+std::vector<std::array<float, 2>> transformPoints(const std::vector<std::array<float, 5>>& points) {
+    std::vector<std::array<float, 2>> result;
+    result.reserve(points.size()); // Reserve space for efficiency.
+    
+    for (const auto& point : points) {
+        result.push_back({point[0], point[1]}); // Extract X and Y.
+    }
+    
+    return result;
 }
