@@ -7,7 +7,7 @@ ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
 void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints );
 cv::Point2f projectPoint(const cv::Point3f& point, float focalLength, const cv::Point2f& center);
 void graphPoints( std::vector< std::array<float, 5> > hull );
-std::vector<std::array<float, 2>> transformPoints(const std::vector<std::array<float, 5>>& points);
+std::vector<cv::Point2f> transformPoints(const std::vector<std::array<float, 5>>& points)
 
 int main() {
     // Create pipeline
@@ -255,6 +255,8 @@ void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints 
             1) Start with the first capture ✅
             2) Union(combine) all of the coordinates into a single set ✅
             3) Find a convex hull of the resulted set
+            4) Delete redundant points
+            5) Graph the result
     */ 
 
     // Main loop of the function
@@ -268,12 +270,9 @@ void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints 
     graphPoints(gatheredPoints);
     std::cout << "\n";
 
-    // TODO: Make sure the code runs
-
-    // TODO: find the convex hull
     // Compute the final convex hull
     std::vector<cv::Point> finalHull(gatheredPoints.size());
-    std::vector<std::array<float, 2>> points2d = transformPoints(gatheredPoints);
+    std::vector<cv::Point2f> points2d = transformPoints(gatheredPoints);
     cv::convexHull(points2d, finalHull);
 
     // TODO: transform the resulted convexHull 2d points back into 3d
@@ -321,12 +320,12 @@ void graphPoints( std::vector< std::array<float, 5> > hull ){
     cv::waitKey(0);
 }
 
-std::vector<std::array<float, 2>> transformPoints(const std::vector<std::array<float, 5>>& points) {
-    std::vector<std::array<float, 2>> result;
+std::vector<cv::Point2f> transformPoints(const std::vector<std::array<float, 5>>& points) {
+    std::vector<cv::Point2f> result;
     result.reserve(points.size()); // Reserve space for efficiency.
     
     for (const auto& point : points) {
-        result.push_back({point[0], point[1]}); // Extract X and Y.
+        result.emplace_back(point[0], point[1]); // Create cv::Point2f with X and Y.
     }
     
     return result;
