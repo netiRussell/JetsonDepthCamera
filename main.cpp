@@ -277,16 +277,13 @@ void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints,
 
 
 cv::Point2f projectPoint(const std::array<float, 5>& point, const cv::Point2f& center) {
-    if (point[2] == 0.0f)
-        return cv::Point2f(0, 0);
-
     float x = point[3] * (point[0] / point[2]) + center.x;
     float y = point[4] * (point[1] / point[2]) + center.y;
     return cv::Point2f(x, y);
 }
 
 
-void graphPoints( std::vector< std::array<float, 5> > hull ){
+void graphPoints(std::vector<std::array<float, 5>> hull) {
     // Set up the display window and projection parameters
     int width = 1280, height = 720;
     cv::Mat image = cv::Mat::zeros(height, width, CV_8UC3);
@@ -294,30 +291,39 @@ void graphPoints( std::vector< std::array<float, 5> > hull ){
 
     // Draw each 3D point on the 2D image
     for (const std::array<float, 5>& point : hull) {
-	if (point[2] <= 0.0f){
+        if (point[2] <= 0.1f) {
             std::cout << "____TEST____" << std::endl;
-	    continue;
-	}
+            continue;
+        }
 
         // Project the 3D point onto the 2D image plane
         cv::Point2f pt2D = projectPoint(point, center);
 
         // Scale the circle size based on the Z coordinate to simulate depth
         int radius = static_cast<int>(10 / point[2]);  // Adjust size based on depth
-        cv::Scalar color(0, 255 - static_cast<int>(100 * (1.0 / point[2])), 255);  // Color changes with Z
+        radius = std::max(1, std::min(20, radius));    // Clamp radius between 1 and 20
 
-        // Draw the projected point as a circle on the 2D plane
-        cv::circle(image, pt2D, radius, color, -1);  // -1 fills the circle
+        // Calculate color based on depth
+        int colorValue = 255 - static_cast<int>(100 * (1.0f / point[2]));
+        colorValue = std::max(0, std::min(255, colorValue));  // Clamp colorValue between 0 and 255
+        cv::Scalar color(0, colorValue, 255);
 
-        // Put the text on the image
-        std::string text = std::to_string(point[0]) + ", " + std::to_string(point[1]) + ", " + std::to_string(point[2]);
-        cv::putText(image, text, pt2D, cv::FONT_HERSHEY_SIMPLEX, 0.3, cv::Scalar(0, 0, 255), 0.75);
+        // Check if the projected point is within image boundaries
+        if (pt2D.x >= 0 && pt2D.x < width && pt2D.y >= 0 && pt2D.y < height) {
+            // Draw the projected point as a circle on the 2D plane
+            cv::circle(image, pt2D, radius, color, -1);  // -1 fills the circle
+
+            // Put the text on the image
+            std::string text = std::to_string(point[0]) + ", " + std::to_string(point[1]) + ", " + std::to_string(point[2]);
+            cv::putText(image, text, pt2D, cv::FONT_HERSHEY_SIMPLEX, 0.3, cv::Scalar(0, 0, 255), 0.75);
+        }
     }
 
     // Display the result
     cv::imshow("3D Points Projection", image);
     cv::waitKey(0);
 }
+
 
 std::vector<cv::Point2f> transformPoints(const std::vector<std::array<float, 5>>& points) {
     std::vector<cv::Point2f> result;
