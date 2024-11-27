@@ -4,10 +4,10 @@
 #include <cmath>
 
 ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
-void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints );
+void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints, double minDepth );
 cv::Point2f projectPoint(const cv::Point3f& point, float focalLength, const cv::Point2f& center);
 void graphPoints( std::vector< std::array<float, 5> > hull );
-std::vector<cv::Point2f> transformPoints(const std::vector<std::array<float, 5>>& points)
+std::vector<cv::Point2f> transformPoints(const std::vector<std::array<float, 5>>& points);
 
 int main() {
     // Create pipeline
@@ -80,6 +80,10 @@ int main() {
         // Threshold depth image to create mask
         cv::Mat mask;
         cv::inRange(depthImage, minDepth, maxDepth, mask);
+
+	// Find the minimal depth within the mask
+	double minDepthInMask;
+	cv::minMaxLoc(mask, &minDepthInMask, nullptr, nullptr, nullptr);
 
         // Noise reduction
         //cv::erode(mask, mask, cv::Mat(), cv::Point(-1, -1), 2);
@@ -197,12 +201,12 @@ int main() {
                     float X = (x - cx) * Z / fx;
                     float Y = (y - cy) * Z / fy;
 
-                    points.push_back({X, Y, Z, cx, cy});
+                    points.push_back({X, Y, Z, fx, fy});
                 }
 
             }
 
-            analyzeCaptures(points);
+            analyzeCaptures(points, minDepthInMask);
 
             // To restart the loop:
             // i = 1;
@@ -246,18 +250,9 @@ ushort interpolateDepth(const cv::Mat& depthImage, int x, int y) {
 }
 
 
-void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints ){
+void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints, double minDepth){
     // Shape of gatheredCaptures = # of captures, # of convex hulls, # of coordinates, 5 coordinatex - X, Y, Z, cx, cy.
     std::cout << "\n------------------------------------------------------------------------\n";
-
-    /*
-        Logic:
-            1) Start with the first capture ✅
-            2) Union(combine) all of the coordinates into a single set ✅
-            3) Find a convex hull of the resulted set
-            4) Delete redundant points
-            5) Graph the result
-    */ 
 
     // Main loop of the function
     std::cout << "\tCurrent Convex Hull size = " << gatheredPoints.size() << "\n";
@@ -268,24 +263,23 @@ void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints 
 
 
     graphPoints(gatheredPoints);
-    std::cout << "\n";
+    std::cout << "\n\n";
+
+    std::cout << "The minimal depth of the object: " << minDepth;
 
     // Compute the final convex hull
     std::vector<cv::Point> finalHull(gatheredPoints.size());
     std::vector<cv::Point2f> points2d = transformPoints(gatheredPoints);
     cv::convexHull(points2d, finalHull);
 
-    // TODO: transform the resulted convexHull 2d points back into 3d
-    // if convexHull only filters out existing vertices, then simply map the gatheredPoints to delete filtered out vertices.
-    // to delete an element from std::vector, use std::vector.erase(...)
-
-    // TODO: graph and output in the terminal resulted coordinates
-
     std::cout << std::endl;
 }
 
 
 cv::Point2f projectPoint(const std::array<float, 5>& point, const cv::Point2f& center) {
+    if (point[2] == 0.0f)
+        return cv::Point2f(0, 0);
+
     float x = point[3] * (point[0] / point[2]) + center.x;
     float y = point[4] * (point[1] / point[2]) + center.y;
     return cv::Point2f(x, y);
@@ -300,6 +294,11 @@ void graphPoints( std::vector< std::array<float, 5> > hull ){
 
     // Draw each 3D point on the 2D image
     for (const std::array<float, 5>& point : hull) {
+	if (point[2] <= 0.0f){
+            std::cout << "____TEST____" << std::endl;
+	    continue;
+	}
+
         // Project the 3D point onto the 2D image plane
         cv::Point2f pt2D = projectPoint(point, center);
 
@@ -330,3 +329,7 @@ std::vector<cv::Point2f> transformPoints(const std::vector<std::array<float, 5>>
     
     return result;
 }
+
+/* terminate called after throwing an instance of 'cv::Exception'
+  what():  OpenCV(4.5.4) /home/ubuntu/build_opencv/opencv/modules/core/src/matrix_wrap.cpp:1393: error: (-215:Assertion failed) mtype == type0 || (CV_MAT_CN(mtype) == CV_MAT_CN(type0) && ((1 << type0) & fixedDepthMask) != 0) in function 'create'
+*/ 
