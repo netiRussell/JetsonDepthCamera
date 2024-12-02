@@ -5,8 +5,9 @@
 
 ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
 void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints, double minDepth );
-cv::Point2f projectPoint(const cv::Point3f& point, float focalLength, const cv::Point2f& center);
+cv::Point2f projectPoint(const std::array<float, 5>& point, const cv::Point2f& center);
 void graphPoints( std::vector< std::array<float, 5> > hull );
+void graphPoints( std::vector<cv::Point2f> hull, double minDepth );
 std::vector<cv::Point2f> transformPoints(const std::vector<std::array<float, 5>>& points);
 
 int main() {
@@ -150,7 +151,7 @@ int main() {
             for (size_t j = 0; j < netHulls.size(); j++) {
 
                 // Check on other hulls
-                std::cout << "Current Area = " << netHulls[j].area << std::endl;
+                // std::cout << "Current Area = " << netHulls[j].area << std::endl;
                 for (size_t k = j+1; k < netHulls.size(); k++) {
 
                     // Make sure the hull hasn't been recognized yet
@@ -164,8 +165,8 @@ int main() {
                         netHulls[j].isRealObject = true;
                         netHulls[k].isRealObject = true;
 
-                        std::cout << "\t Considered Area = " << netHulls[k].area << std::endl;
-                        std::cout << "Hull " << j << ": Centroid = (" << netHulls[j].coordinates.first << ", " << netHulls[j].coordinates.second << ")" << std::endl;
+                        // std::cout << "\t Considered Area = " << netHulls[k].area << std::endl;
+                        // std::cout << "Hull " << j << ": Centroid = (" << netHulls[j].coordinates.first << ", " << netHulls[j].coordinates.second << ")" << std::endl;
                     }
 
                 }
@@ -261,45 +262,96 @@ void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints,
             std::cout << "\t\tPoint: X=" << coordinates[0] << "m, Y=" << coordinates[1] << "m, Z=" << coordinates[2] << "m" << std::endl;
     }
 
-    std::cout << "The minimal depth of the object: " << minDepth;
+    // TODO: minDepth is not correct
+    std::cout << "--------------------------------------------------------------------------\n\n\n\nThe minimal depth of the object: " << minDepth << std::endl;
+    minDepth = 0.5;
+
+    graphPoints(gatheredPoints);
 
     // Compute the final convex hull
-    std::vector<cv::Point> finalHull(gatheredPoints.size());
-    std::vector<cv::Point2f> points2d = transformPoints(gatheredPoints);
+    std::vector<cv::Point2f> finalHull;
+    std::vector<cv::Point2f> points2d = transformPoints(gatheredPoints); // ! maybe there is a way to keep all 5 points?
     cv::convexHull(points2d, finalHull);
 
+    // Output information related to the final hull
+    for ( const cv::Point2f &point : finalHull  ){
+	    std::cout << "\t\tPoint: X=" << point.x << " Y=" << point.y << " Z=" << minDepth << std::endl;  
+    }
+
+    // TODO: graph the finalHull with correct fx,fy // cx,cy can be computed by the function
     graphPoints(finalHull, minDepth);
+
 
     std::cout << std::endl;
 }
 
 
-void graphPoints( std::vector<cv::Point> hull, double minDepth ){
+void graphPoints(std::vector<std::array<float, 5>> hull) {
     // Set up the display window and projection parameters
     int width = 1280, height = 720;
     cv::Mat image = cv::Mat::zeros(height, width, CV_8UC3);
     cv::Point2f center(width / 2, height / 2);  // Center of the 2D plane
 
     // Draw each 3D point on the 2D image
-    for (const cv::Point point : hull) { 
+    for (const std::array<float, 5>& point : hull) {
         // Project the 3D point onto the 2D image plane
-        cv::Point2f pt2D = cv::Point2f(point[0] + center.x, point[1] + center.y);
+        cv::Point2f pt2D = projectPoint(point, center);
 
+        // Scale the circle size based on the Z coordinate to simulate depth
+        int radius = static_cast<int>(10 / point[2]);  // Adjust size based on depth
+        radius = std::max(1, std::min(20, radius));    // Clamp radius between 1 and 20
+
+        // Calculate color based on depth
+        int colorValue = 255 - static_cast<int>(100 * (1.0f / point[2]));
+        colorValue = std::max(0, std::min(255, colorValue));  // Clamp colorValue between 0 and 255
+        cv::Scalar color(0, colorValue, 255);
+
+        // Check if the projected point is within image boundaries
+        if (pt2D.x >= 0 && pt2D.x < width && pt2D.y >= 0 && pt2D.y < height) {
+            // Draw the projected point as a circle on the 2D plane
+            cv::circle(image, pt2D, radius, color, -1);  // -1 fills the circle
+
+            // Put the text on the image
+            // std::string text = std::to_string(point[0]) + ", " + std::to_string(point[1]) + ", " + std::to_string(point[2]);
+            // cv::putText(image, text, pt2D, cv::FONT_HERSHEY_SIMPLEX, 0.3, cv::Scalar(0, 0, 255), 0.75);
+        }
+    }
+
+    // Display the result
+    cv::imshow("All hull combined", image);
+}
+
+
+void graphPoints( std::vector<cv::Point2f> hull, double minDepth ){
+    // Set up the display window and projection parameters
+    int width = 1280, height = 720;
+    cv::Mat image = cv::Mat::zeros(height, width, CV_8UC3);
+
+    // Draw each 3D point on the 2D image
+    for (const cv::Point point : hull) { 
         // Scale the circle size based on the Z coordinate to simulate depth
         int radius = static_cast<int>(10 / minDepth);  // Adjust size based on depth
 
         // Draw the projected point as a circle on the 2D plane
-        cv::circle(image, pt2D, radius, (0, 255, 255), -1);  // -1 fills the circle
+        cv::circle(image, point, radius, cv::Scalar(0, 255, 255), -1);  // -1 fills the circle
 
         // Put the text on the image
-        std::string text = std::to_string(point[0]) + ", " + std::to_string(point[1]) + ", " + std::to_string(minDepth);
-        cv::putText(image, text, pt2D, cv::FONT_HERSHEY_SIMPLEX, 0.3, cv::Scalar(0, 0, 255), 0.75);
+        // std::string text = std::to_string(point.x) + ", " + std::to_string(point.y) + ", " + std::to_string(minDepth);
+        // cv::putText(image, text, pt2D, cv::FONT_HERSHEY_SIMPLEX, 0.3, cv::Scalar(0, 0, 255), 0.75);
     }
 
     // Display the result
-    cv::imshow("3D Points Projection", image);
+    cv::imshow("Final filtered hulls", image);
     cv::waitKey(0);
 }
+
+
+cv::Point2f projectPoint(const std::array<float, 5>& point, const cv::Point2f& center) {
+    float x = point[3] * (point[0] / point[2]) + center.x;
+    float y = point[4] * (point[1] / point[2]) + center.y;
+    return cv::Point2f(x, y);
+}
+
 
 std::vector<cv::Point2f> transformPoints(const std::vector<std::array<float, 5>>& points) {
     std::vector<cv::Point2f> result;
@@ -311,7 +363,3 @@ std::vector<cv::Point2f> transformPoints(const std::vector<std::array<float, 5>>
     
     return result;
 }
-
-/* terminate called after throwing an instance of 'cv::Exception'
-  what():  OpenCV(4.5.4) /home/ubuntu/build_opencv/opencv/modules/core/src/matrix_wrap.cpp:1393: error: (-215:Assertion failed) mtype == type0 || (CV_MAT_CN(mtype) == CV_MAT_CN(type0) && ((1 << type0) & fixedDepthMask) != 0) in function 'create'
-*/ 
