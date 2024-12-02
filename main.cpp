@@ -7,7 +7,7 @@ ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
 void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints, double minDepth );
 cv::Point2f projectPoint(const std::array<float, 5>& point, const cv::Point2f& center);
 void graphPoints( std::vector< std::array<float, 5> > hull );
-void graphPoints( std::vector<cv::Point2f> hull, double minDepth );
+void graphPoints( std::vector<std::array<float, 5>> hull, double minDepth );
 std::vector<cv::Point2f> transformPoints(const std::vector<std::array<float, 5>>& points);
 
 int main() {
@@ -269,13 +269,14 @@ void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints,
     graphPoints(gatheredPoints);
 
     // Compute the final convex hull
-    std::vector<cv::Point2f> finalHull;
-    std::vector<cv::Point2f> points2d = transformPoints(gatheredPoints); // ! maybe there is a way to keep all 5 points?
-    cv::convexHull(points2d, finalHull);
+    std::vector<cv::Point2f> points2d = transformPoints(gatheredPoints);
+    std::vector<int> hullIndices;
+    cv::convexHull(points2d, hullIndices, false, false);
 
-    // Output information related to the final hull
-    for ( const cv::Point2f &point : finalHull  ){
-	    std::cout << "\t\tPoint: X=" << point.x << " Y=" << point.y << " Z=" << minDepth << std::endl;  
+    // Gather the coordinates found
+    sstd::vector<std::array<float, 5>> finalHull;
+    for (int idx : hullIndices) {
+        finalHull.push_back(gatheredPoints[idx]); // Includes X, Y, Z, fx, fy
     }
 
     // TODO: graph the finalHull with correct fx,fy // cx,cy can be computed by the function
@@ -312,37 +313,42 @@ void graphPoints(std::vector<std::array<float, 5>> hull) {
             cv::circle(image, pt2D, radius, color, -1);  // -1 fills the circle
 
             // Put the text on the image
-            // std::string text = std::to_string(point[0]) + ", " + std::to_string(point[1]) + ", " + std::to_string(point[2]);
-            // cv::putText(image, text, pt2D, cv::FONT_HERSHEY_SIMPLEX, 0.3, cv::Scalar(0, 0, 255), 0.75);
+            /* std::string text = std::to_string(point[0]) + ", " + std::to_string(point[1]) + ", " + std::to_string(point[2]);
+               cv::putText(image, text, pt2D, cv::FONT_HERSHEY_SIMPLEX, 0.3, cv::Scalar(0, 0, 255), 0.75); */
         }
     }
 
     // Display the result
-    cv::imshow("All hull combined", image);
+    cv::imshow("All hulls combined", image);
 }
 
 
-void graphPoints( std::vector<cv::Point2f> hull, double minDepth ){
+void graphPoints( std::vector<std::array<float, 5>> hull, double minDepth ){
     // Set up the display window and projection parameters
     int width = 1280, height = 720;
     cv::Mat image = cv::Mat::zeros(height, width, CV_8UC3);
+    cv::Point2f center(width / 2, height / 2);  // Center of the 2D plane
 
     // Draw each 3D point on the 2D image
-    for (const cv::Point point : hull) { 
+    for (const std::array<float, 5>& point : hull) {
+        // Project the 3D point onto the 2D image plane
+        cv::Point2f pt2D = projectPoint(point, center);
+
         // Scale the circle size based on the Z coordinate to simulate depth
         int radius = static_cast<int>(10 / minDepth);  // Adjust size based on depth
+        radius = std::max(1, std::min(20, radius));    // Clamp radius between 1 and 20
+        std::cout << "\t\tPoint: X=" << point[0] << "( " << pt2D.x << " )" << " Y=" << point[1] << "( " << pt2D.y << " )" << " Z=" << minDepth << std::endl; 
 
-        // Draw the projected point as a circle on the 2D plane
-        cv::circle(image, point, radius, cv::Scalar(0, 255, 255), -1);  // -1 fills the circle
-
-        // Put the text on the image
-        // std::string text = std::to_string(point.x) + ", " + std::to_string(point.y) + ", " + std::to_string(minDepth);
-        // cv::putText(image, text, pt2D, cv::FONT_HERSHEY_SIMPLEX, 0.3, cv::Scalar(0, 0, 255), 0.75);
+        // Check if the projected point is within image boundaries
+        if (pt2D.x >= 0 && pt2D.x < width && pt2D.y >= 0 && pt2D.y < height) {
+            // Draw the projected point as a circle on the 2D plane
+            cv::circle(image, point, radius, cv::Scalar(0, 255, 255), -1);  // -1 fills the circle
+        }
     }
 
     // Display the result
-    cv::imshow("Final filtered hulls", image);
-    cv::waitKey(0);
+    cv::imshow("Final Hull", image);
+    // cv::waitKey(0); // TODO: if not needed - delete
 }
 
 
