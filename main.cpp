@@ -82,9 +82,9 @@ int main() {
         cv::Mat mask;
         cv::inRange(depthImage, minDepth, maxDepth, mask);
 
-	// Find the minimal depth within the mask
-	double minDepthInMask;
-	cv::minMaxLoc(mask, &minDepthInMask, nullptr, nullptr, nullptr);
+        // Find the minimal depth within the mask
+        double minDepthInMask;
+        cv::minMaxLoc(depthImage, &minDepthInMask, nullptr, nullptr, nullptr, mask);
 
         // Noise reduction
         //cv::erode(mask, mask, cv::Mat(), cv::Point(-1, -1), 2);
@@ -342,7 +342,7 @@ void graphPoints( std::vector<std::array<float, 5>> hull, double minDepth ){
         // Check if the projected point is within image boundaries
         if (pt2D.x >= 0 && pt2D.x < width && pt2D.y >= 0 && pt2D.y < height) {
             // Draw the projected point as a circle on the 2D plane
-            cv::circle(image, point, radius, cv::Scalar(0, 255, 255), -1);  // -1 fills the circle
+            cv::circle(image, pt2D, radius, cv::Scalar(0, 255, 255), -1);  // -1 fills the circle
         }
     }
 
