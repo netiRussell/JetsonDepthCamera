@@ -250,7 +250,7 @@ ushort interpolateDepth(const cv::Mat& depthImage, int x, int y) {
 }
 
 
-void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints, double minDepth){
+/*void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints, double minDepth){
     // Shape of gatheredCaptures = # of captures, # of convex hulls, # of coordinates, 5 coordinatex - X, Y, Z, cx, cy.
     std::cout << "\n------------------------------------------------------------------------\n";
 
@@ -283,7 +283,63 @@ void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints,
 
 
     std::cout << std::endl;
+}*/
+
+void analyzeCaptures(const std::vector<std::array<float, 5>>& gatheredPoints, double minDepth, float fx, float fy, float cx, float cy) {
+    // Project points to 2D
+    std::vector<cv::Point2f> points2d;
+    for (const auto& point : gatheredPoints) {
+        points2d.push_back(projectPoint(point, fx, fy, cx, cy));
+    }
+
+    // Create a binary image
+    int width = 1280, height = 720;
+    cv::Mat binaryImage = cv::Mat::zeros(height, width, CV_8UC1);
+
+    // Plot the points onto the binary image
+    for (const auto& pt : points2d) {
+        int x = static_cast<int>(pt.x);
+        int y = static_cast<int>(pt.y);
+        if (x >= 0 && x < width && y >= 0 && y < height) {
+            binaryImage.at<uchar>(y, x) = 255;
+        }
+    }
+
+    // Apply morphological operations to fill gaps (optional)
+    cv::dilate(binaryImage, binaryImage, cv::Mat(), cv::Point(-1,-1), 2);
+    cv::erode(binaryImage, binaryImage, cv::Mat(), cv::Point(-1,-1), 2);
+
+    // Find contours
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(binaryImage, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+    // Select the largest contour
+    int maxContourIdx = -1;
+    double maxArea = 0;
+    for (size_t i = 0; i < contours.size(); ++i) {
+        double area = cv::contourArea(contours[i]);
+        if (area > maxArea) {
+            maxArea = area;
+            maxContourIdx = i;
+        }
+    }
+
+    // Compute the convex hull of the largest contour
+    if (maxContourIdx >= 0) {
+        std::vector<cv::Point> hull;
+        cv::convexHull(contours[maxContourIdx], hull);
+
+        // Optionally, map hull points back to 3D points if needed
+        // This can be done by finding the closest 2D points in your original points2d vector
+
+        // Visualize the convex hull
+        cv::Mat hullImage = cv::Mat::zeros(height, width, CV_8UC3);
+        cv::drawContours(hullImage, std::vector<std::vector<cv::Point>>{hull}, -1, cv::Scalar(0, 255, 0), 2);
+        cv::imshow("Final Convex Hull", hullImage);
+        cv::waitKey(0);
+    }
 }
+
 
 
 void graphPoints(std::vector<std::array<float, 5>> hull) {
@@ -369,3 +425,6 @@ std::vector<cv::Point2f> transformPoints(const std::vector<std::array<float, 5>>
     
     return result;
 }
+
+
+// ! TODO: better way is to accumalate contours and then take a convex hull of the set
