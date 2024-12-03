@@ -4,11 +4,11 @@
 #include <cmath>
 
 ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
-void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints, double minDepth );
-cv::Point2f projectPoint(const std::array<float, 5>& point, const cv::Point2f& center);
-void graphPoints( std::vector< std::array<float, 5> > hull );
-void graphPoints( std::vector<std::array<float, 5>> hull, double minDepth );
-std::vector<cv::Point2f> transformPoints(const std::vector<std::array<float, 5>>& points);
+void analyzeCaptures( const std::vector< std::array<float, 7> >& gatheredPoints, double minDepth );
+cv::Point2f projectPoint(const std::array<float, 7>& point);
+void graphPoints( std::vector< std::array<float, 7> > hull );
+void graphPoints( std::vector<std::array<float, 7>> hull, double minDepth );
+std::vector<cv::Point2f> transformPoints(const std::vector<std::array<float, 7>>& points);
 
 int main() {
     // Create pipeline
@@ -107,7 +107,7 @@ int main() {
         // Filter out noise
         for (size_t i = 0; i < hulls.size(); i++) {
 
-            std::vector< std::array<float, 5> > points; // Points of a single convex hull
+            std::vector< std::array<float, 7> > points; // Points of a single convex hull
 
             // Compute area in pixels and skip if the captured hull is just a noise
             double area = cv::contourArea(hulls[i]);
@@ -143,7 +143,7 @@ int main() {
             	cv::drawContours(displayImage, hulls, static_cast<int>(i), cv::Scalar(0, 255, 0), 2);
             }
 
-	    // Display image
+	        // Display image
             cv::imshow("Convex Hulls", displayImage);
 
             // Check if the hull represents a real object
@@ -175,7 +175,7 @@ int main() {
 
             // ! TODO: change the structure to have all of the coordinates in a single capture
             // Filter out coordinates for visualization
-            std::vector< std::array<float, 5> > points;
+            std::vector< std::array<float, 7> > points;
 
             for (int j = 0; j < netHulls.size(); j++) {
 
@@ -201,7 +201,7 @@ int main() {
                     float X = (x - cx) * Z / fx;
                     float Y = (y - cy) * Z / fy;
 
-                    points.push_back({X, Y, Z, fx, fy});
+                    points.push_back({X, Y, Z, fx, fy, cx, cy});
                 }
 
             }
@@ -250,14 +250,14 @@ ushort interpolateDepth(const cv::Mat& depthImage, int x, int y) {
 }
 
 
-void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints, double minDepth){
+void analyzeCaptures( const std::vector< std::array<float, 7> >& gatheredPoints, double minDepth){
     // Shape of gatheredCaptures = # of captures, # of convex hulls, # of coordinates, 5 coordinatex - X, Y, Z, cx, cy.
     std::cout << "\n------------------------------------------------------------------------\n";
 
     // Main loop of the function
     std::cout << "\tCurrent Convex Hull size = " << gatheredPoints.size() << "\n";
 
-    for( const std::array<float, 5> &coordinates : gatheredPoints ){
+    for( const std::array<float, 7> &coordinates : gatheredPoints ){
             std::cout << "\t\tPoint: X=" << coordinates[0] << "m, Y=" << coordinates[1] << "m, Z=" << coordinates[2] << "m" << std::endl;
     }
 
@@ -273,9 +273,9 @@ void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints,
     cv::convexHull(points2d, hullIndices, false, false);
 
     // Gather the coordinates found
-    std::vector<std::array<float, 5>> finalHull;
+    std::vector<std::array<float, 7>> finalHull;
     for (int idx : hullIndices) {
-        finalHull.push_back(gatheredPoints[idx]); // Includes X, Y, Z, fx, fy
+        finalHull.push_back(gatheredPoints[idx]); // Includes X, Y, Z, fx, fy, cx, cy
     }
 
     // TODO: graph the finalHull with correct fx,fy // cx,cy can be computed by the function
@@ -286,16 +286,15 @@ void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints,
 }
 
 
-void graphPoints(std::vector<std::array<float, 5>> hull) {
+void graphPoints(std::vector<std::array<float, 7>> hull) {
     // Set up the display window and projection parameters
     int width = 1280, height = 720;
     cv::Mat image = cv::Mat::zeros(height, width, CV_8UC3);
-    cv::Point2f center(width / 2, height / 2);  // Center of the 2D plane
 
     // Draw each 3D point on the 2D image
-    for (const std::array<float, 5>& point : hull) {
+    for (const std::array<float, 7>& point : hull) {
         // Project the 3D point onto the 2D image plane
-        cv::Point2f pt2D = projectPoint(point, center);
+        cv::Point2f pt2D = projectPoint(point);
 
         // Scale the circle size based on the Z coordinate to simulate depth
         int radius = static_cast<int>(10 / point[2]);  // Adjust size based on depth
@@ -322,11 +321,10 @@ void graphPoints(std::vector<std::array<float, 5>> hull) {
 }
 
 
-void graphPoints( std::vector<std::array<float, 5>> hull, double minDepth ){
+void graphPoints( std::vector<std::array<float, 7>> hull, double minDepth ){
     // Set up the display window and projection parameters
     int width = 1280, height = 720;
     cv::Mat image = cv::Mat::zeros(height, width, CV_8UC3);
-    cv::Point2f center(width / 2, height / 2);  // Center of the 2D plane
 
     // Scale the circle size based on the Z coordinate to simulate depth
     int radius = static_cast<int>(10 / minDepth);  // Adjust size based on depth
@@ -334,10 +332,10 @@ void graphPoints( std::vector<std::array<float, 5>> hull, double minDepth ){
     
     // Draw each 3D point on the 2D image 
     std::vector<cv::Point> vertices;
-    for (const std::array<float, 5>& point : hull) {
+    for (const std::array<float, 7>& point : hull) {
         // Project the 3D point onto the 2D image plane
-        cv::Point2f pt2D = projectPoint(point, center);
-	vertices.push_back(pt2D);
+        cv::Point2f pt2D = projectPoint(point);
+	    vertices.push_back(pt2D);
 
         std::cout << "\t\tPoint: X=" << point[0] << "( " << pt2D.x << " )" << " Y=" << point[1] << "( " << pt2D.y << " )" << " Z=" << minDepth << std::endl; 
         cv::circle(image, pt2D, radius, cv::Scalar(0, 255, 255), -1);  // -1 fills the circle
@@ -352,14 +350,15 @@ void graphPoints( std::vector<std::array<float, 5>> hull, double minDepth ){
 }
 
 
-cv::Point2f projectPoint(const std::array<float, 5>& point, const cv::Point2f& center) {
-    float x = point[3] * (point[0] / point[2]) + center.x;
-    float y = point[4] * (point[1] / point[2]) + center.y;
+cv::Point2f projectPoint(const std::array<float, 7>& point) {
+    float x = point[3] * (point[0] / point[2]) + point[5];
+    float y = point[4] * (point[1] / point[2]) + point[6];
+
     return cv::Point2f(x, y);
 }
 
 
-std::vector<cv::Point2f> transformPoints(const std::vector<std::array<float, 5>>& points) {
+std::vector<cv::Point2f> transformPoints(const std::vector<std::array<float, 7>>& points) {
     std::vector<cv::Point2f> result;
     result.reserve(points.size()); // Reserve space for efficiency.
     
