@@ -59,7 +59,7 @@ int main() {
     float cy = intrinsics[1][2];
 
     // Depth thresholds in millimeters
-    int minDepth = 500;  // 0.5 meters
+    int minDepth = 100;  // 0.3 meters
     int maxDepth = 800; // 0.8 meters
 
     struct HullData {
@@ -104,17 +104,6 @@ int main() {
             cv::convexHull(contours[i], hulls[i]);
         }
 
-        // Create an image to display
-        cv::Mat displayImage;
-        cv::normalize(depthImage, displayImage, 255, 0, cv::NORM_INF, CV_8UC1);
-        cv::equalizeHist(displayImage, displayImage);
-        cv::applyColorMap(displayImage, displayImage, cv::COLORMAP_HOT);
-
-        // Draw convex hulls on the image
-        for (size_t i = 0; i < hulls.size(); i++) {
-            cv::drawContours(displayImage, hulls, static_cast<int>(i), cv::Scalar(0, 255, 0), 2);
-        }
-
         // Filter out noise
         for (size_t i = 0; i < hulls.size(); i++) {
 
@@ -141,11 +130,21 @@ int main() {
 
         }
 
-        // Display image
-        cv::imshow("Convex Hulls", displayImage);
-
         // Analyze and clear the hulls that don't represent real objects
         if( i == nCaptPerAnalysis-1 ){
+            // Create an image to display
+            cv::Mat displayImage;
+            cv::normalize(depthImage, displayImage, 255, 0, cv::NORM_INF, CV_8UC1);
+            cv::equalizeHist(displayImage, displayImage);
+            cv::applyColorMap(displayImage, displayImage, cv::COLORMAP_HOT);
+
+            // Draw convex hulls on the image
+            for (size_t i = 0; i < hulls.size(); i++) {
+            	cv::drawContours(displayImage, hulls, static_cast<int>(i), cv::Scalar(0, 255, 0), 2);
+            }
+
+	    // Display image
+            cv::imshow("Convex Hulls", displayImage);
 
             // Check if the hull represents a real object
             for (size_t j = 0; j < netHulls.size(); j++) {
@@ -264,7 +263,7 @@ void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints,
 
     // TODO: minDepth is not correct
     std::cout << "--------------------------------------------------------------------------\n\n\n\nThe minimal depth of the object: " << minDepth << std::endl;
-    minDepth = 0.5;
+    minDepth /= 1000;
 
     graphPoints(gatheredPoints);
 
@@ -274,7 +273,7 @@ void analyzeCaptures( const std::vector< std::array<float, 5> >& gatheredPoints,
     cv::convexHull(points2d, hullIndices, false, false);
 
     // Gather the coordinates found
-    sstd::vector<std::array<float, 5>> finalHull;
+    std::vector<std::array<float, 5>> finalHull;
     for (int idx : hullIndices) {
         finalHull.push_back(gatheredPoints[idx]); // Includes X, Y, Z, fx, fy
     }
@@ -315,7 +314,7 @@ void graphPoints(std::vector<std::array<float, 5>> hull) {
             // Put the text on the image
             /* std::string text = std::to_string(point[0]) + ", " + std::to_string(point[1]) + ", " + std::to_string(point[2]);
                cv::putText(image, text, pt2D, cv::FONT_HERSHEY_SIMPLEX, 0.3, cv::Scalar(0, 0, 255), 0.75); */
-        }
+	}
     }
 
     // Display the result
@@ -329,26 +328,27 @@ void graphPoints( std::vector<std::array<float, 5>> hull, double minDepth ){
     cv::Mat image = cv::Mat::zeros(height, width, CV_8UC3);
     cv::Point2f center(width / 2, height / 2);  // Center of the 2D plane
 
-    // Draw each 3D point on the 2D image
+    // Scale the circle size based on the Z coordinate to simulate depth
+    int radius = static_cast<int>(10 / minDepth);  // Adjust size based on depth
+    radius = std::max(1, std::min(20, radius));    // Clamp radius between 1 and 20
+    
+    // Draw each 3D point on the 2D image 
+    std::vector<cv::Point> vertices;
     for (const std::array<float, 5>& point : hull) {
         // Project the 3D point onto the 2D image plane
         cv::Point2f pt2D = projectPoint(point, center);
+	vertices.push_back(pt2D);
 
-        // Scale the circle size based on the Z coordinate to simulate depth
-        int radius = static_cast<int>(10 / minDepth);  // Adjust size based on depth
-        radius = std::max(1, std::min(20, radius));    // Clamp radius between 1 and 20
         std::cout << "\t\tPoint: X=" << point[0] << "( " << pt2D.x << " )" << " Y=" << point[1] << "( " << pt2D.y << " )" << " Z=" << minDepth << std::endl; 
-
-        // Check if the projected point is within image boundaries
-        if (pt2D.x >= 0 && pt2D.x < width && pt2D.y >= 0 && pt2D.y < height) {
-            // Draw the projected point as a circle on the 2D plane
-            cv::circle(image, pt2D, radius, cv::Scalar(0, 255, 255), -1);  // -1 fills the circle
-        }
+        cv::circle(image, pt2D, radius, cv::Scalar(0, 255, 255), -1);  // -1 fills the circle
     }
+
+    // Draw contours
+    cv::polylines(image, vertices, true, cv::Scalar(0, 255, 0), 2);
 
     // Display the result
     cv::imshow("Final Hull", image);
-    // cv::waitKey(0); // TODO: if not needed - delete
+    cv::waitKey(0);
 }
 
 
