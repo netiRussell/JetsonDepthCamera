@@ -6,7 +6,7 @@
 ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
 void analyzeCaptures( const std::vector< std::array<float, 7> >& gatheredPoints, double minDepth, cv::Mat displayImage );
 void projectPoints(const std::vector<cv::Point2f>& hull, std::vector<cv::Point> &projectedPoints);
-void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, double minDepth, bool final )
+void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, double minDepth, bool final );
 
 int main() {
     // Create pipeline
@@ -132,7 +132,7 @@ int main() {
         if( i == nCaptPerAnalysis-1 ){
             // Create an image to display
             cv::Mat displayImage;
-            cv::normalize(depthImage, displayImage, 255, 0, cv::NORM_INF, CV_8UC1);
+            cv::normalize(depthImage, displayImage, 0, 255, cv::NORM_MINMAX, CV_8UC1);
             cv::equalizeHist(displayImage, displayImage);
             cv::applyColorMap(displayImage, displayImage, cv::COLORMAP_HOT);
 
@@ -208,12 +208,13 @@ int main() {
 
             // To restart the loop:
             // i = 1;
-            // Clear the netHulls vector
+            // Clear the netHulls vector: netHulls.clear();
         }
 
         i++;
     }
 
+    netHulls.clear();
     cv::waitKey(100); // Wait briefly (100 ms) to allow resources to close
     cv::destroyAllWindows(); // Explicitly close all OpenCV windows
 
@@ -288,23 +289,23 @@ void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, do
     // Scale the circle size based on minimal depth of the object to simulate depth
     int radius = static_cast<int>(5 / minDepth);
     radius = std::max(1, std::min(20, radius));    // Clamp radius between 1 and 20
-    cv::Scalar color = (0, 255, 255);
+    cv::Scalar color(0, 255, 255);
 
     // Change style to distinguish nodes
     if( final == false ){
-        color = (255, 0, 0);
+        color = cv::Scalar(255, 0, 0);
         radius = static_cast<int>(8 / minDepth);
         radius = std::max(1, std::min(20, radius));
     } 
     
     // Draw each 3D point on the 2D image 
-    std::vector<cv::Point> vertices;
-    for (const cv::Point2f& pt2d : hull) {
+    std::vector<cv::Point2f> vertices;
+    for (const cv::Point2f& pt2D : hull) {
         // Project the 3D point onto the 2D image plane
 	    vertices.push_back(pt2D);
 
-        std::cout << "\t\tPoint: X=" pt2D.x " Y=" << pt2D.y << " Z=" << minDepth << std::endl; 
-        cv::circle(image, pt2D, radius, cv::Scalar(0, 255, 255), -1);  // -1 fills the circle
+        std::cout << "\t\tPoint: X=" << pt2D.x << " Y=" << pt2D.y << " Z=" << minDepth << std::endl; 
+        cv::circle(image, pt2D, radius, color, -1);  // -1 fills the circle
     }
 
     // Draw contours
