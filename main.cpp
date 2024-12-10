@@ -5,7 +5,7 @@
 
 ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
 void analyzeCaptures( const std::vector< std::array<float, 7> >& gatheredPoints, double minDepth, cv::Mat displayImage );
-void projectPoints(const std::vector<cv::Point2f>& hull, std::vector<cv::Point> &projectedPoints);
+void projectPoints(const std::vector< std::array<float, 7> >& hull, std::vector<cv::Point2f>& projectedPoints);
 void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, double minDepth, bool final );
 
 int main() {
@@ -284,22 +284,22 @@ void analyzeCaptures( const std::vector< std::array<float, 7> >& gatheredPoints,
 void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, double minDepth, bool final ){
     // Set up the display window and projection parameters
     int width = 1280, height = 720;
-    cv::Mat image = displayImage;
+    cv::Mat image = displayImage.clone();
 
     // Scale the circle size based on minimal depth of the object to simulate depth
-    int radius = static_cast<int>(5 / minDepth);
+    int radius = static_cast<int>(3 / minDepth);
     radius = std::max(1, std::min(20, radius));    // Clamp radius between 1 and 20
     cv::Scalar color(0, 255, 255);
 
     // Change style to distinguish nodes
     if( final == false ){
         color = cv::Scalar(255, 0, 0);
-        radius = static_cast<int>(8 / minDepth);
+        radius = static_cast<int>( 3 / minDepth);
         radius = std::max(1, std::min(20, radius));
     } 
     
     // Draw each 3D point on the 2D image 
-    std::vector<cv::Point2f> vertices;
+    std::vector<cv::Point> vertices;
     for (const cv::Point2f& pt2D : hull) {
         // Project the 3D point onto the 2D image plane
 	    vertices.push_back(pt2D);
@@ -309,11 +309,16 @@ void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, do
     }
 
     // Draw contours
-    cv::polylines(image, vertices, true, cv::Scalar(255, 0, 0), 2);
+    cv::polylines(image, vertices, true, color, 2);
 
     // Display the result
-    cv::imshow("Final Hull", image);
-    cv::waitKey(0);
+    if( final == true ){
+	cv::imshow("Final Hull", image);
+	cv::waitKey(0);
+    } else {
+	cv::imshow("All points combined", image);
+    }
+
 }
 
 
