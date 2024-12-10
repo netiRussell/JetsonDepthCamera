@@ -271,9 +271,30 @@ void analyzeCaptures( const std::vector< std::array<float, 7> >& gatheredPoints,
     // Graph all the points 
     graphPoints(projectedPoints, displayImage, minDepth, false);
 
-    // Compute the final convex hull
+    // Compute the final convex hull for visualizing (optional)
     std::vector<cv::Point2f> finalHull;
     cv::convexHull(projectedPoints, finalHull);
+
+    /* -- Trying new approach START -- */
+    
+    // Compute the final convex hull for coordinates
+    std::vector<int> hullIndices;
+    cv::convexHull(projectedPoints, hullIndices, false, false);
+
+    // Gather the coordinates found
+    std::vector<std::array<float, 7>> finalCoordinates;
+    for (int idx : hullIndices) {
+        finalCoordinates.push_back(gatheredPoints[idx]); // Includes X, Y, Z, fx, fy, cx, cy
+    }
+
+
+    // Print the final coordinates
+    std::cout << "--------------------------------------------------------------------------\n\n\n\nFinal Coordinates:" << std::endl;
+    for( const std::array<float, 7> &coordinates : finalCoordinates ){
+            std::cout << "\t\tPoint: X=" << coordinates[0] << "m, Y=" << coordinates[1] << "m, Z=" << coordinates[2] << "m" << std::endl;
+    }
+
+    /* -- Trying new approach END -- */
 
     // Graph the final convex hull 
     graphPoints(finalHull, displayImage, minDepth, true);
