@@ -275,7 +275,9 @@ void analyzeCaptures( const std::vector< std::array<float, 7> >& gatheredPoints,
     std::vector<cv::Point2f> finalHull;
     cv::convexHull(projectedPoints, finalHull);
 
-    /* -- Trying new approach START -- */
+    double arc_length = cv::arcLength(finalHull, true);
+    std::vector<cv::Point2f> approxHull;
+    cv::approxPolyDP(finalHull, approxHull, 0.01*arc_length, true); // epsilon 1% to 5% of the arc length
     
     // Compute the final convex hull for coordinates
     std::vector<int> hullIndices;
@@ -287,6 +289,17 @@ void analyzeCaptures( const std::vector< std::array<float, 7> >& gatheredPoints,
         finalCoordinates.push_back(gatheredPoints[idx]); // Includes X, Y, Z, fx, fy, cx, cy
     }
 
+    // Getting the original version of the approximated coordinates 
+    // TODO: (Super-duper stupid, must be changed)
+    std::vector<std::array<float, 7>> approxCoordinates;
+    for (const auto& point : approxHull) {
+        for (size_t i = 0; i < finalHull.size(); ++i) {
+            if (cv::norm(point - finalHull[i]) < 1e-6) { // Find closest match
+                approxCoordinates.push_back(finalCoordinates[i]); // Get index in gatheredPoints
+                break;
+            }
+        }
+    }
 
     // Print the final coordinates
     std::cout << "--------------------------------------------------------------------------\n\n\n\nFinal Coordinates:" << std::endl;
@@ -294,10 +307,8 @@ void analyzeCaptures( const std::vector< std::array<float, 7> >& gatheredPoints,
             std::cout << "\t\tPoint: X=" << coordinates[0] << "m, Y=" << coordinates[1] << "m, Z=" << coordinates[2] << "m" << std::endl;
     }
 
-    /* -- Trying new approach END -- */
-
     // Graph the final convex hull 
-    graphPoints(finalHull, displayImage, minDepth, true);
+    graphPoints(approxHull, displayImage, minDepth, true);
 
     std::cout << std::endl;
 }
