@@ -4,7 +4,7 @@
 #include <cmath>
 
 ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
-void analyzeCaptures( const std::vector< std::array<float, 7> >& gatheredPoints, double minDepth, cv::Mat displayImage );
+void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, double minDepth, cv::Mat displayImage );
 void projectPoints(const std::vector< std::array<float, 7> >& hull, std::vector<cv::Point2f>& projectedPoints);
 void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, double minDepth, bool final );
 
@@ -57,8 +57,8 @@ int main() {
     float cy = intrinsics[1][2];
 
     // Depth thresholds in millimeters
-    int minDepth = 100;  // 0.3 meters
-    int maxDepth = 800; // 0.8 meters
+    int minDepth = 100;  // 0.1 meters
+    int maxDepth = 400; // 0.4 meters
 
     struct HullData {
         std::vector<cv::Point> hull;
@@ -249,16 +249,12 @@ ushort interpolateDepth(const cv::Mat& depthImage, int x, int y) {
 }
 
 
-void analyzeCaptures( const std::vector< std::array<float, 7> >& gatheredPoints, double minDepth, cv::Mat displayImage){
+void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, double minDepth, cv::Mat displayImage){
     // Shape of gatheredCaptures = # of captures, # of convex hulls, # of coordinates, 5 coordinatex - X, Y, Z, cx, cy.
     std::cout << "\n------------------------------------------------------------------------\n";
 
     // Main loop of the function
     std::cout << "\tCurrent Convex Hull size = " << gatheredPoints.size() << "\n";
-
-    for( const std::array<float, 7> &coordinates : gatheredPoints ){
-            std::cout << "\t\tPoint: X=" << coordinates[0] << "m, Y=" << coordinates[1] << "m, Z=" << coordinates[2] << "m" << std::endl;
-    }
 
     // Print out the minimal depth
     std::cout << "--------------------------------------------------------------------------\n\n\n\nThe minimal depth of the object: " << minDepth << "mm" << std::endl;
@@ -304,6 +300,7 @@ void analyzeCaptures( const std::vector< std::array<float, 7> >& gatheredPoints,
     // Print the final coordinates
     std::cout << "--------------------------------------------------------------------------\n\n\n\nFinal Coordinates:" << std::endl;
     for( const std::array<float, 7> &coordinates : finalCoordinates ){
+            gatheredPoints[idx][2] = minDepth;
             std::cout << "\t\tPoint: X=" << coordinates[0] << "m, Y=" << coordinates[1] << "m, Z=" << coordinates[2] << "m" << std::endl;
     }
 
@@ -336,7 +333,7 @@ void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, do
         // Project the 3D point onto the 2D image plane
 	    vertices.push_back(pt2D);
 
-        std::cout << "\t\tPoint: X=" << pt2D.x << " Y=" << pt2D.y << " Z=" << minDepth << std::endl; 
+        // std::cout << "\t\tPoint: X=" << pt2D.x << " Y=" << pt2D.y << " Z=" << minDepth << std::endl; 
         cv::circle(image, pt2D, radius, color, -1);  // -1 fills the circle
     }
 
