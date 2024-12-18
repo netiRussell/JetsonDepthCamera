@@ -34,6 +34,29 @@ int main() {
     stereo->setLeftRightCheck(true);
     stereo->initialConfig.setMedianFilter(dai::MedianFilter::KERNEL_7x7);
     stereo->setExtendedDisparity(true);
+    stereo->setSubpixel(false);
+
+    auto config = stereo->initialConfig.get();
+
+    config.postProcessing.speckleFilter.enable = false;
+
+    config.postProcessing.speckleFilter.speckleRange = 50;
+
+    config.postProcessing.temporalFilter.enable = true;
+
+    config.postProcessing.spatialFilter.enable = true;
+
+    config.postProcessing.spatialFilter.holeFillingRadius = 2;
+
+    config.postProcessing.spatialFilter.numIterations = 1;
+
+    config.postProcessing.decimationFilter.decimationFactor = 1;
+    
+    config.postProcessing.thresholdFilter.minRange = 100;
+
+    config.postProcessing.thresholdFilter.maxRange = 700;
+
+    stereo->initialConfig.set(config);
 
     // Linking
     monoLeft->out.link(stereo->left);
@@ -58,7 +81,7 @@ int main() {
 
     // Depth thresholds in millimeters
     int minDepth = 100;  // 0.1 meters
-    int maxDepth = 400; // 0.4 meters
+    int maxDepth = 700; // 0.7 meters
 
     struct HullData {
         std::vector<cv::Point> hull;
@@ -282,6 +305,7 @@ void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, doubl
     // Gather the coordinates found
     std::vector<std::array<float, 7>> finalCoordinates;
     for (int idx : hullIndices) {
+        gatheredPoints[idx][2] = minDepth;
         finalCoordinates.push_back(gatheredPoints[idx]); // Includes X, Y, Z, fx, fy, cx, cy
     }
 
@@ -300,12 +324,19 @@ void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, doubl
     // Print the final coordinates
     std::cout << "--------------------------------------------------------------------------\n\n\n\nFinal Coordinates:" << std::endl;
     for( const std::array<float, 7> &coordinates : finalCoordinates ){
-            gatheredPoints[idx][2] = minDepth;
             std::cout << "\t\tPoint: X=" << coordinates[0] << "m, Y=" << coordinates[1] << "m, Z=" << coordinates[2] << "m" << std::endl;
     }
 
+    std::cout << "--------------------------------------------------------------------------\n\n\n\nApprox Coordinates:" << std::endl;
+    for( const std::array<float, 7> &coordinates : approxCoordinates ){
+            std::cout << "\t\tPoint: X=" << coordinates[0] << "m, Y=" << coordinates[1] << "m, Z=" << coordinates[2] << "m" << std::endl;
+    }
+
+
     // Graph the final convex hull 
     graphPoints(approxHull, displayImage, minDepth, true);
+    //graphPoints(finalHull, displayImage, minDepth, true);
+
 
     std::cout << std::endl;
 }
@@ -318,14 +349,7 @@ void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, do
     // Scale the circle size based on minimal depth of the object to simulate depth
     int radius = static_cast<int>(3 / minDepth);
     radius = std::max(1, std::min(20, radius));    // Clamp radius between 1 and 20
-    cv::Scalar color(0, 255, 255);
-
-    // Change style to distinguish nodes
-    if( final == false ){
-        color = cv::Scalar(255, 0, 0);
-        radius = static_cast<int>( 3 / minDepth);
-        radius = std::max(1, std::min(20, radius));
-    } 
+    cv::Scalar color(255, 0, 0);
     
     // Draw each 3D point on the 2D image 
     std::vector<cv::Point> vertices;
@@ -337,15 +361,14 @@ void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, do
         cv::circle(image, pt2D, radius, color, -1);  // -1 fills the circle
     }
 
-    // Draw contours
-    cv::polylines(image, vertices, true, color, 2);
-
     // Display the result
     if( final == true ){
 	cv::imshow("Final Hull", image);
 	cv::waitKey(0);
     } else {
 	cv::imshow("All points combined", image);
+	// Draw contours
+    	cv::polylines(image, vertices, true, color, 2);
     }
 
 }
