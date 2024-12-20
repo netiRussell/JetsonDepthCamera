@@ -1,4 +1,4 @@
-﻿#include <iostream>
+#include <iostream>
 #include <depthai/depthai.hpp>
 #include <opencv2/opencv.hpp>
 #include <cmath>
@@ -29,7 +29,7 @@ int main() {
     monoRight->setBoardSocket(dai::CameraBoardSocket::CAM_C);
 
     // StereoDepth properties
-    stereo->setDefaultProfilePreset(dai::node::StereoDepth::PresetMode::HIGH_DENSITY);
+    stereo->setDefaultProfilePreset(dai::node::StereoDepth::PresetMode::DEFAULT);
     stereo->initialConfig.setConfidenceThreshold(225);
     stereo->setLeftRightCheck(true);
     stereo->initialConfig.setMedianFilter(dai::MedianFilter::KERNEL_7x7);
