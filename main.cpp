@@ -1,4 +1,4 @@
-#include <iostream>
+﻿#include <iostream>
 #include <depthai/depthai.hpp>
 #include <opencv2/opencv.hpp>
 #include <cmath>
@@ -104,6 +104,7 @@ int main() {
         cv::inRange(depthImage, minDepth, maxDepth, mask);
 
         // Find the minimal depth within the mask
+        // ! Min depth is recalculated for each frame. 
         double minDepthInMask;
         cv::minMaxLoc(depthImage, &minDepthInMask, nullptr, nullptr, nullptr, mask);
 
@@ -333,7 +334,10 @@ void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, doubl
     }
 
 
-    // Graph the final convex hull 
+    // Graph the final convex hull
+    cv::Mat depthMask;
+    cv::threshold( displayImage, depthMask, 0, 255, cv::THRESH_BINARY );
+    graphPoints(approxHull, depthMask, minDepth, false);
     graphPoints(approxHull, displayImage, minDepth, true);
     //graphPoints(finalHull, displayImage, minDepth, true);
 
