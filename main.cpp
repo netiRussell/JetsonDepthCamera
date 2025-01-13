@@ -29,34 +29,11 @@ int main() {
     monoRight->setBoardSocket(dai::CameraBoardSocket::CAM_C);
 
     // StereoDepth properties
-    stereo->setDefaultProfilePreset(dai::node::StereoDepth::PresetMode::DEFAULT);
+    stereo->setDefaultProfilePreset(dai::node::StereoDepth::PresetMode::HIGH_DENSITY);
     stereo->initialConfig.setConfidenceThreshold(225);
     stereo->setLeftRightCheck(true);
     stereo->initialConfig.setMedianFilter(dai::MedianFilter::KERNEL_7x7);
     stereo->setExtendedDisparity(true);
-    stereo->setSubpixel(false);
-
-    auto config = stereo->initialConfig.get();
-
-    config.postProcessing.speckleFilter.enable = false;
-
-    config.postProcessing.speckleFilter.speckleRange = 50;
-
-    config.postProcessing.temporalFilter.enable = true;
-
-    config.postProcessing.spatialFilter.enable = true;
-
-    config.postProcessing.spatialFilter.holeFillingRadius = 2;
-
-    config.postProcessing.spatialFilter.numIterations = 1;
-
-    config.postProcessing.decimationFilter.decimationFactor = 1;
-    
-    config.postProcessing.thresholdFilter.minRange = 100;
-
-    config.postProcessing.thresholdFilter.maxRange = 700;
-
-    stereo->initialConfig.set(config);
 
     // Linking
     monoLeft->out.link(stereo->left);
@@ -81,7 +58,7 @@ int main() {
 
     // Depth thresholds in millimeters
     int minDepth = 100;  // 0.1 meters
-    int maxDepth = 700; // 0.7 meters
+    int maxDepth = 450; // 0.4 meters
 
     struct HullData {
         std::vector<cv::Point> hull;
@@ -104,7 +81,6 @@ int main() {
         cv::inRange(depthImage, minDepth, maxDepth, mask);
 
         // Find the minimal depth within the mask
-        // ! Min depth is recalculated for each frame. 
         double minDepthInMask;
         cv::minMaxLoc(depthImage, &minDepthInMask, nullptr, nullptr, nullptr, mask);
 
@@ -334,10 +310,7 @@ void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, doubl
     }
 
 
-    // Graph the final convex hull
-    cv::Mat depthMask;
-    cv::threshold( displayImage, depthMask, 0, 255, cv::THRESH_BINARY );
-    graphPoints(approxHull, depthMask, minDepth, false);
+    // Graph the final convex hull 
     graphPoints(approxHull, displayImage, minDepth, true);
     //graphPoints(finalHull, displayImage, minDepth, true);
 
