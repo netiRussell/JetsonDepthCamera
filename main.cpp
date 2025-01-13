@@ -2,8 +2,6 @@
 #include <depthai/depthai.hpp>
 #include <opencv2/opencv.hpp>
 #include <cmath>
-#include <vector>
-#include <limits>
 
 ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
 void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, double minDepth, cv::Mat displayImage );
@@ -11,7 +9,7 @@ void projectPoints(const std::vector< std::array<float, 7> >& hull, std::vector<
 void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, double minDepth, bool final );
 static double pointLineDistance(const cv::Point2f &P, const cv::Point2f &A, const cv::Point2f &B);
 static void rdp(const std::vector<std::pair<cv::Point2f,int>> &points, double epsilon, std::vector<std::pair<cv::Point2f,int>> &out);
-approxPolyDPWithIndices(const std::vector<cv::Point2f> &src, std::vector<cv::Point2f> &dst, std::vector<int> &indices, double epsilon, bool closed);
+void approxPolyDPWithIndices(const std::vector<cv::Point2f> &src, std::vector<cv::Point2f> &dst, std::vector<int> &indices, double epsilon, bool closed);
 
 int main() {
     // Create pipeline
@@ -39,6 +37,25 @@ int main() {
     stereo->setLeftRightCheck(true);
     stereo->initialConfig.setMedianFilter(dai::MedianFilter::KERNEL_7x7);
     stereo->setExtendedDisparity(true);
+    stereo->setSubpixel(false);
+
+    auto config = stereo->initialConfig.get();
+
+    config.postProcessing.speckleFilter.enable = false;
+
+    config.postProcessing.speckleFilter.speckleRange = 60;
+
+    config.postProcessing.temporalFilter.enable = true;
+
+    config.postProcessing.spatialFilter.enable = true;
+
+    config.postProcessing.spatialFilter.holeFillingRadius = 2;
+
+    config.postProcessing.spatialFilter.numIterations = 1;
+
+    config.postProcessing.decimationFilter.decimationFactor = 1; // TODO: delete for the sake of perfomance
+
+    stereo->initialConfig.set(config);
 
     // Linking
     monoLeft->out.link(stereo->left);
@@ -63,7 +80,7 @@ int main() {
 
     // Depth thresholds in millimeters
     int minDepth = 100;  // 0.1 meters
-    int maxDepth = 450; // 0.4 meters
+    int maxDepth = 700; // 0.7 meters
 
     struct HullData {
         std::vector<cv::Point> hull;
@@ -86,6 +103,7 @@ int main() {
         cv::inRange(depthImage, minDepth, maxDepth, mask);
 
         // Find the minimal depth within the mask
+        // ! Min depth is recalculated for each frame. 
         double minDepthInMask;
         cv::minMaxLoc(depthImage, &minDepthInMask, nullptr, nullptr, nullptr, mask);
 
@@ -130,23 +148,29 @@ int main() {
             newHullData.coordinates = std::make_pair(mu.m10 / mu.m00, mu.m01 / mu.m00); // x, y
 
             netHulls.push_back(newHullData);
-
-        }
+	    }
 
         // Analyze and clear the hulls that don't represent real objects
         if( i == nCaptPerAnalysis-1 ){
             // Create an image to display
             cv::Mat displayImage;
-            cv::normalize(depthImage, displayImage, 0, 255, cv::NORM_MINMAX, CV_8UC1);
+            cv::normalize(mask, displayImage, 0, 255, cv::NORM_MINMAX, CV_8UC1);
             cv::equalizeHist(displayImage, displayImage);
-            cv::applyColorMap(displayImage, displayImage, cv::COLORMAP_HOT);
+	        cv::applyColorMap(displayImage, displayImage, cv::COLORMAP_HOT);
+	    
+	    
+            // TODO: calculate average minDepth
+            // TODO: change bg color based on minDepth
+                // displayImage.setTo( cv::Scalar(0, 0, 139) );
+	    
+	        cv::imshow("Just the object", displayImage);
 
             // Draw convex hulls on the image
             for (size_t i = 0; i < hulls.size(); i++) {
             	cv::drawContours(displayImage, hulls, static_cast<int>(i), cv::Scalar(0, 255, 0), 2);
             }
 
-	    // Display image
+	        // Display image
             cv::imshow("Convex Hulls", displayImage);
 
             // Check if the hull represents a real object
@@ -253,7 +277,7 @@ ushort interpolateDepth(const cv::Mat& depthImage, int x, int y) {
         return 0; // Unable to interpolate
 }
 
-/// Generating a final convex hull with as little vertices as possible from the gathered points
+
 void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, double minDepth, cv::Mat displayImage){
     // Shape of gatheredCaptures = # of captures, # of convex hulls, # of coordinates, 5 coordinatex - X, Y, Z, cx, cy.
     std::cout << "\n------------------------------------------------------------------------\n";
@@ -310,16 +334,39 @@ void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, doubl
             std::cout << "\t\tPoint: X=" << coordinates[0] << "m, Y=" << coordinates[1] << "m, Z=" << coordinates[2] << "m" << std::endl;
     }
 
-
-    // Graph the final convex hull 
+    // Graph the final convex hull
     graphPoints(approxHull, displayImage, minDepth, true);
-    //graphPoints(finalHull, displayImage, minDepth, true);
+
+
+    // -- Additional graph but special case -----------------------------------
+    // Set up the display window and projection parameters
+    int width = 1280, height = 720;
+    cv::Mat justPoints = cv::Mat::zeros(height, width, CV_8UC3);
+
+    // Scale the circle size based on minimal depth of the object to simulate depth
+    int radius = static_cast<int>(3 / minDepth);
+    radius = std::max(1, std::min(20, radius));    // Clamp radius between 1 and 20
+    cv::Scalar color(255, 0, 0);
+    
+    // Draw each 3D point on the 2D image 
+    std::vector<cv::Point> vertices;
+    for (const cv::Point2f& pt2D : approxHull) {
+        // Project the 3D point onto the 2D image plane
+	    vertices.push_back(pt2D);
+
+        // std::cout << "\t\tPoint: X=" << pt2D.x << " Y=" << pt2D.y << " Z=" << minDepth << std::endl; 
+        cv::circle(justPoints, pt2D, radius, color, -1);  // -1 fills the circle
+    }
+
+    // Display the result
+    cv::imshow("Just the final points", justPoints);
+    cv::waitKey(0);
+    // -------------------------------------------------------------------------
 
 
     std::cout << std::endl;
 }
 
-/// Graphing the points on the 2D image
 void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, double minDepth, bool final ){
     // Set up the display window and projection parameters
     int width = 1280, height = 720;
@@ -343,7 +390,6 @@ void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, do
     // Display the result
     if( final == true ){
 	cv::imshow("Final Hull", image);
-	cv::waitKey(0);
     } else {
 	cv::imshow("All points combined", image);
 	// Draw contours
@@ -352,10 +398,10 @@ void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, do
 
 }
 
-/// Projecting 3d points onto the 2d image plane
+
 void projectPoints(const std::vector< std::array<float, 7> >& hull, std::vector<cv::Point2f>& projectedPoints) {
 
-    // The procedure
+    // Project the 3D points onto the 2D image plane
     for (const std::array<float, 7>& point : hull) {
         // TODO: try subsituting point[2] with minDepth to get better results
         float x = point[3] * (point[0] / point[2]) + point[5];
@@ -490,4 +536,3 @@ void approxPolyDPWithIndices(const std::vector<cv::Point2f> &src, std::vector<cv
         indices.push_back(p.second);
     }
 }
-
