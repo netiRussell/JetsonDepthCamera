@@ -2,6 +2,8 @@
 #include <depthai/depthai.hpp>
 #include <opencv2/opencv.hpp>
 #include <cmath>
+#include <vector>
+#include <limits>
 
 ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
 void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, double minDepth, cv::Mat displayImage );
@@ -248,7 +250,7 @@ ushort interpolateDepth(const cv::Mat& depthImage, int x, int y) {
         return 0; // Unable to interpolate
 }
 
-
+/// Generating a final convex hull with as little vertices as possible from the gathered points
 void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, double minDepth, cv::Mat displayImage){
     // Shape of gatheredCaptures = # of captures, # of convex hulls, # of coordinates, 5 coordinatex - X, Y, Z, cx, cy.
     std::cout << "\n------------------------------------------------------------------------\n";
@@ -267,35 +269,31 @@ void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, doubl
     // Graph all the points 
     graphPoints(projectedPoints, displayImage, minDepth, false);
 
-    // Compute the final convex hull for visualizing (optional)
+    // Compute the convex hull of the projected points and store vertices to visualize them (optional)
     std::vector<cv::Point2f> finalHull;
     cv::convexHull(projectedPoints, finalHull);
-
-    double arc_length = cv::arcLength(finalHull, true);
-    std::vector<cv::Point2f> approxHull;
-    cv::approxPolyDP(finalHull, approxHull, 0.01*arc_length, true); // epsilon 1% to 5% of the arc length
     
-    // Compute the final convex hull for coordinates
+    // Compute the convex hull of the projected points and store indices of vertices (to get original coordinates back later)
     std::vector<int> hullIndices;
     cv::convexHull(projectedPoints, hullIndices, false, false);
 
-    // Gather the coordinates found
+    // Get the original coordinates of the convex hull vertices
     std::vector<std::array<float, 7>> finalCoordinates;
     for (int idx : hullIndices) {
         gatheredPoints[idx][2] = minDepth;
         finalCoordinates.push_back(gatheredPoints[idx]); // Includes X, Y, Z, fx, fy, cx, cy
     }
 
+    // Approximate the convex hull to get less vetices => better perfomance
+    double arc_length = cv::arcLength(finalHull, true);
+    std::vector<cv::Point2f> approxHull;
+    std::vector<int> origIndices;
+    cv::approxPolyDPWithIndices(finalHull, approxHull, origIndices, 0.01*arc_length, true); // epsilon 1% to 5% of the arc length
+
     // Getting the original version of the approximated coordinates 
-    // TODO: (Super-duper stupid, must be changed)
     std::vector<std::array<float, 7>> approxCoordinates;
-    for (const auto& point : approxHull) {
-        for (size_t i = 0; i < finalHull.size(); ++i) {
-            if (cv::norm(point - finalHull[i]) < 1e-6) { // Find closest match
-                approxCoordinates.push_back(finalCoordinates[i]); // Get index in gatheredPoints
-                break;
-            }
-        }
+    for (int idx : origIndices){
+        approxCoordinates.push_back(finalCoordinates[idx]);
     }
 
     // Print the final coordinates
@@ -318,6 +316,7 @@ void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, doubl
     std::cout << std::endl;
 }
 
+/// Graphing the points on the 2D image
 void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, double minDepth, bool final ){
     // Set up the display window and projection parameters
     int width = 1280, height = 720;
@@ -350,10 +349,10 @@ void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, do
 
 }
 
-
+/// Projecting 3d points onto the 2d image plane
 void projectPoints(const std::vector< std::array<float, 7> >& hull, std::vector<cv::Point2f>& projectedPoints) {
 
-    // Project the 3D points onto the 2D image plane
+    // The procedure
     for (const std::array<float, 7>& point : hull) {
         // TODO: try subsituting point[2] with minDepth to get better results
         float x = point[3] * (point[0] / point[2]) + point[5];
@@ -363,3 +362,136 @@ void projectPoints(const std::vector< std::array<float, 7> >& hull, std::vector<
     }
 
 }
+
+/// Helper to compute the perpendicular distance of point P to the line A->B
+static double pointLineDistance(const cv::Point2f &P,
+                                const cv::Point2f &A,
+                                const cv::Point2f &B)
+{
+    // If A and B are the same point, just return distance from P to A
+    double denom = cv::norm(B - A);
+    if (denom < 1e-12) {
+        return cv::norm(P - A);
+    }
+
+    // Vector AB
+    cv::Point2f AB = B - A;
+    // Vector AP
+    cv::Point2f AP = P - A;
+
+    // Projection length of AP onto AB, normalized by |AB|
+    double t = (AP.dot(AB)) / (AB.dot(AB));
+
+    // Closest point on AB to P
+    // NOTE: If we want an unbounded line, we let t be any real number;
+    // for a line segment, we could clamp t into [0, 1]. 
+    // But standard RDP treats the line as infinite for distance measure.
+    cv::Point2f proj = A + t * AB;
+
+    return cv::norm(P - proj);
+}
+
+/// Recursive RDP function on vector of (Point2f, originalIndex)
+static void rdp(const std::vector<std::pair<cv::Point2f,int>> &points,
+                double epsilon,
+                std::vector<std::pair<cv::Point2f,int>> &out)
+{
+    // If there are not enough points to simplify, just return them
+    if (points.size() < 2) {
+        out.insert(out.end(), points.begin(), points.end());
+        return;
+    }
+
+    // Line from first to last point
+    const cv::Point2f &start = points.front().first;
+    const cv::Point2f &end   = points.back().first;
+
+    // Find point with the maximum distance to the line
+    double maxDist = -1.0;
+    size_t index   = 0;
+
+    for (size_t i = 1; i < points.size() - 1; i++) {
+        double dist = pointLineDistance(points[i].first, start, end);
+        if (dist > maxDist) {
+            maxDist = dist;
+            index   = i;
+        }
+    }
+
+    // If max distance is greater than epsilon, recursively simplify
+    if (maxDist > epsilon) {
+        // RDP on the sub-vectors [0..index], [index..end]
+        std::vector<std::pair<cv::Point2f,int>> leftIn(points.begin(), points.begin() + index + 1);
+        std::vector<std::pair<cv::Point2f,int>> rightIn(points.begin() + index, points.end());
+
+        std::vector<std::pair<cv::Point2f,int>> leftOut, rightOut;
+        rdp(leftIn, epsilon, leftOut);
+        rdp(rightIn, epsilon, rightOut);
+
+        // The last point of leftOut is the same as the first point of rightOut,
+        // so we can merge them carefully to avoid duplication.
+        out.insert(out.end(), leftOut.begin(), leftOut.end() - 1);
+        out.insert(out.end(), rightOut.begin(), rightOut.end());
+    }
+    else {
+        // Just keep the endpoints
+        out.push_back(points.front());
+        out.push_back(points.back());
+    }
+}
+
+/**
+ * @param src     Input polygon points (e.g., your convex hull).
+ * @param dst     Output approximated polygon points.
+ * @param indices Output indices (relative to the original `src` vector).
+ * @param epsilon Distance threshold for RDP.
+ * @param closed  Whether the polygon is closed (like approxPolyDP's "closed" flag).
+ */
+void approxPolyDPWithIndices(const std::vector<cv::Point2f> &src, std::vector<cv::Point2f> &dst, std::vector<int> &indices, double epsilon, bool closed)
+{
+    dst.clear();
+    indices.clear();
+
+    if (src.empty()) {
+        return;
+    }
+
+    // 1) Build a vector of (point, originalIndex).
+    //    If the polygon is “closed”, we can replicate the first point at end or handle continuity.
+    //    This example treats “closed” by connecting last -> first during the distance check.
+    std::vector<std::pair<cv::Point2f,int>> points;
+    points.reserve(src.size() + (closed ? 1 : 0));
+
+    for (int i = 0; i < (int)src.size(); i++) {
+        points.emplace_back(src[i], i);
+    }
+
+    // If closed, duplicate the first point at the end with the same index 
+    // so the line end -> start is considered in RDP:
+    if (closed) {
+        points.emplace_back(src[0], 0);
+    }
+
+    // 2) Apply RDP on this vector
+    std::vector<std::pair<cv::Point2f,int>> simplified;
+    rdp(points, epsilon, simplified);
+
+    // For closed shapes, after RDP, we might have the first point repeated at the end.
+    // Typically, we remove the last repeated point.  Check if indices match or if the points match:
+    if (closed && simplified.size() > 1) {
+        if ( (simplified.front().second == simplified.back().second) ||
+             (cv::norm(simplified.front().first - simplified.back().first) < 1e-7) )
+        {
+            simplified.pop_back();
+        }
+    }
+
+    // 3) Copy the results to the output
+    dst.reserve(simplified.size());
+    indices.reserve(simplified.size());
+    for (auto &p : simplified) {
+        dst.push_back(p.first);
+        indices.push_back(p.second);
+    }
+}
+
