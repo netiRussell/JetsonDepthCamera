@@ -4,6 +4,7 @@
 #include <cmath>
 #include <vector>
 #include <limits>
+#incude <numeric>
 
 ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
 void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, double minDepth, cv::Mat displayImage );
@@ -88,6 +89,7 @@ int main() {
     int i = 1;
     int nCaptPerAnalysis = 40;
     std::vector<HullData> netHulls;
+    std::vector<double> minDepths;
     while (i <= nCaptPerAnalysis) {
         // Get depth frame
         auto depthFrame = depthQueue->get<dai::ImgFrame>();
@@ -98,9 +100,9 @@ int main() {
         cv::inRange(depthImage, minDepth, maxDepth, mask);
 
         // Find the minimal depth within the mask
-        // ! Min depth is recalculated for each frame. 
         double minDepthInMask;
         cv::minMaxLoc(depthImage, &minDepthInMask, nullptr, nullptr, nullptr, mask);
+        minDepths.push_back(minDepthInMask);
 
         // Find contours in the mask
         std::vector<std::vector<cv::Point>> contours;
@@ -146,10 +148,8 @@ int main() {
             cv::equalizeHist(displayImage, displayImage);
             cv::applyColorMap(displayImage, displayImage, cv::COLORMAP_HOT);
 
-            // TODO: calculate average minDepth
             // TODO: change bg color based on minDepth
                 // displayImage.setTo( cv::Scalar(0, 0, 139) );
-
 	        cv::imshow("Just the object", displayImage);
 
 
@@ -158,7 +158,7 @@ int main() {
             	cv::drawContours(displayImage, hulls, static_cast<int>(i), cv::Scalar(0, 255, 0), 2);
             }
 
-	    // Display image
+	        // Display image
             cv::imshow("Convex Hulls", displayImage);
 
             // Check if the hull represents a real object
@@ -221,7 +221,7 @@ int main() {
 
             }
 
-            analyzeCaptures(points, minDepthInMask, displayImage);
+            analyzeCaptures(points, std::reduce(minDepths.begin(), minDepths.end()) / minDepths.size(), displayImage);
 
             // To restart the loop:
             // i = 1;
