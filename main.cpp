@@ -9,6 +9,9 @@ ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
 void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, double minDepth, cv::Mat displayImage );
 void projectPoints(const std::vector< std::array<float, 7> >& hull, std::vector<cv::Point2f>& projectedPoints);
 void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, double minDepth, bool final );
+static double pointLineDistance(const cv::Point2f &P, const cv::Point2f &A, const cv::Point2f &B);
+static void rdp(const std::vector<std::pair<cv::Point2f,int>> &points, double epsilon, std::vector<std::pair<cv::Point2f,int>> &out);
+approxPolyDPWithIndices(const std::vector<cv::Point2f> &src, std::vector<cv::Point2f> &dst, std::vector<int> &indices, double epsilon, bool closed);
 
 int main() {
     // Create pipeline
@@ -288,7 +291,7 @@ void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, doubl
     double arc_length = cv::arcLength(finalHull, true);
     std::vector<cv::Point2f> approxHull;
     std::vector<int> origIndices;
-    cv::approxPolyDPWithIndices(finalHull, approxHull, origIndices, 0.01*arc_length, true); // epsilon 1% to 5% of the arc length
+    approxPolyDPWithIndices(finalHull, approxHull, origIndices, 0.01*arc_length, true); // epsilon 1% to 5% of the arc length
 
     // Getting the original version of the approximated coordinates 
     std::vector<std::array<float, 7>> approxCoordinates;
@@ -364,10 +367,7 @@ void projectPoints(const std::vector< std::array<float, 7> >& hull, std::vector<
 }
 
 /// Helper to compute the perpendicular distance of point P to the line A->B
-static double pointLineDistance(const cv::Point2f &P,
-                                const cv::Point2f &A,
-                                const cv::Point2f &B)
-{
+static double pointLineDistance(const cv::Point2f &P, const cv::Point2f &A, const cv::Point2f &B) {
     // If A and B are the same point, just return distance from P to A
     double denom = cv::norm(B - A);
     if (denom < 1e-12) {
@@ -392,10 +392,7 @@ static double pointLineDistance(const cv::Point2f &P,
 }
 
 /// Recursive RDP function on vector of (Point2f, originalIndex)
-static void rdp(const std::vector<std::pair<cv::Point2f,int>> &points,
-                double epsilon,
-                std::vector<std::pair<cv::Point2f,int>> &out)
-{
+static void rdp(const std::vector<std::pair<cv::Point2f,int>> &points, double epsilon, std::vector<std::pair<cv::Point2f,int>> &out) {
     // If there are not enough points to simplify, just return them
     if (points.size() < 2) {
         out.insert(out.end(), points.begin(), points.end());
@@ -447,8 +444,7 @@ static void rdp(const std::vector<std::pair<cv::Point2f,int>> &points,
  * @param epsilon Distance threshold for RDP.
  * @param closed  Whether the polygon is closed (like approxPolyDP's "closed" flag).
  */
-void approxPolyDPWithIndices(const std::vector<cv::Point2f> &src, std::vector<cv::Point2f> &dst, std::vector<int> &indices, double epsilon, bool closed)
-{
+void approxPolyDPWithIndices(const std::vector<cv::Point2f> &src, std::vector<cv::Point2f> &dst, std::vector<int> &indices, double epsilon, bool closed) {
     dst.clear();
     indices.clear();
 
