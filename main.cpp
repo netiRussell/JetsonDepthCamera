@@ -2,6 +2,8 @@
 #include <depthai/depthai.hpp>
 #include <opencv2/opencv.hpp>
 #include <cmath>
+#include <vector>
+#include <limits>
 
 ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
 void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, double minDepth, cv::Mat displayImage );
@@ -37,25 +39,18 @@ int main() {
     stereo->setLeftRightCheck(true);
     stereo->initialConfig.setMedianFilter(dai::MedianFilter::KERNEL_7x7);
     stereo->setExtendedDisparity(true);
-    stereo->setSubpixel(false);
 
+    /* Filters - can be used to improve the final output
     auto config = stereo->initialConfig.get();
-
     config.postProcessing.speckleFilter.enable = false;
-
     config.postProcessing.speckleFilter.speckleRange = 60;
-
     config.postProcessing.temporalFilter.enable = true;
-
     config.postProcessing.spatialFilter.enable = true;
-
     config.postProcessing.spatialFilter.holeFillingRadius = 2;
-
     config.postProcessing.spatialFilter.numIterations = 1;
-
     config.postProcessing.decimationFilter.decimationFactor = 1; // TODO: delete for the sake of perfomance
-
     stereo->initialConfig.set(config);
+    */
 
     // Linking
     monoLeft->out.link(stereo->left);
@@ -80,7 +75,7 @@ int main() {
 
     // Depth thresholds in millimeters
     int minDepth = 100;  // 0.1 meters
-    int maxDepth = 700; // 0.7 meters
+    int maxDepth = 450; // 0.4 meters
 
     struct HullData {
         std::vector<cv::Point> hull;
@@ -106,14 +101,6 @@ int main() {
         // ! Min depth is recalculated for each frame. 
         double minDepthInMask;
         cv::minMaxLoc(depthImage, &minDepthInMask, nullptr, nullptr, nullptr, mask);
-
-        // Noise reduction
-        //cv::erode(mask, mask, cv::Mat(), cv::Point(-1, -1), 2);
-        //cv::dilate(mask, mask, cv::Mat(), cv::Point(-1, -1), 2);
-
-        // Blur
-        //cv::GaussianBlur(mask, mask, cv::Size(9, 9), 5);
-
 
         // Find contours in the mask
         std::vector<std::vector<cv::Point>> contours;
@@ -148,7 +135,8 @@ int main() {
             newHullData.coordinates = std::make_pair(mu.m10 / mu.m00, mu.m01 / mu.m00); // x, y
 
             netHulls.push_back(newHullData);
-	    }
+
+        }
 
         // Analyze and clear the hulls that don't represent real objects
         if( i == nCaptPerAnalysis-1 ){
@@ -156,21 +144,21 @@ int main() {
             cv::Mat displayImage;
             cv::normalize(mask, displayImage, 0, 255, cv::NORM_MINMAX, CV_8UC1);
             cv::equalizeHist(displayImage, displayImage);
-	        cv::applyColorMap(displayImage, displayImage, cv::COLORMAP_HOT);
-	    
-	    
+            cv::applyColorMap(displayImage, displayImage, cv::COLORMAP_HOT);
+
             // TODO: calculate average minDepth
             // TODO: change bg color based on minDepth
                 // displayImage.setTo( cv::Scalar(0, 0, 139) );
-	    
+
 	        cv::imshow("Just the object", displayImage);
+
 
             // Draw convex hulls on the image
             for (size_t i = 0; i < hulls.size(); i++) {
             	cv::drawContours(displayImage, hulls, static_cast<int>(i), cv::Scalar(0, 255, 0), 2);
             }
 
-	        // Display image
+	    // Display image
             cv::imshow("Convex Hulls", displayImage);
 
             // Check if the hull represents a real object
@@ -277,7 +265,7 @@ ushort interpolateDepth(const cv::Mat& depthImage, int x, int y) {
         return 0; // Unable to interpolate
 }
 
-
+/// Generating a final convex hull with as little vertices as possible from the gathered points
 void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, double minDepth, cv::Mat displayImage){
     // Shape of gatheredCaptures = # of captures, # of convex hulls, # of coordinates, 5 coordinatex - X, Y, Z, cx, cy.
     std::cout << "\n------------------------------------------------------------------------\n";
@@ -334,9 +322,9 @@ void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, doubl
             std::cout << "\t\tPoint: X=" << coordinates[0] << "m, Y=" << coordinates[1] << "m, Z=" << coordinates[2] << "m" << std::endl;
     }
 
-    // Graph the final convex hull
-    graphPoints(approxHull, displayImage, minDepth, true);
 
+    // Graph the final convex hull 
+    graphPoints(approxHull, displayImage, minDepth, true);
 
     // -- Additional graph but special case -----------------------------------
     // Set up the display window and projection parameters
@@ -347,7 +335,7 @@ void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, doubl
     int radius = static_cast<int>(3 / minDepth);
     radius = std::max(1, std::min(20, radius));    // Clamp radius between 1 and 20
     cv::Scalar color(255, 0, 0);
-    
+
     // Draw each 3D point on the 2D image 
     std::vector<cv::Point> vertices;
     for (const cv::Point2f& pt2D : approxHull) {
@@ -361,12 +349,12 @@ void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, doubl
     // Display the result
     cv::imshow("Just the final points", justPoints);
     cv::waitKey(0);
-    // -------------------------------------------------------------------------
 
 
     std::cout << std::endl;
 }
 
+/// Graphing the points on the 2D image
 void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, double minDepth, bool final ){
     // Set up the display window and projection parameters
     int width = 1280, height = 720;
@@ -390,6 +378,7 @@ void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, do
     // Display the result
     if( final == true ){
 	cv::imshow("Final Hull", image);
+	cv::waitKey(0);
     } else {
 	cv::imshow("All points combined", image);
 	// Draw contours
@@ -398,10 +387,10 @@ void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, do
 
 }
 
-
+/// Projecting 3d points onto the 2d image plane
 void projectPoints(const std::vector< std::array<float, 7> >& hull, std::vector<cv::Point2f>& projectedPoints) {
 
-    // Project the 3D points onto the 2D image plane
+    // The procedure
     for (const std::array<float, 7>& point : hull) {
         // TODO: try subsituting point[2] with minDepth to get better results
         float x = point[3] * (point[0] / point[2]) + point[5];
