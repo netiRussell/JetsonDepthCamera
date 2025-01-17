@@ -15,7 +15,7 @@ void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, do
 static double pointLineDistance(const cv::Point2f &P, const cv::Point2f &A, const cv::Point2f &B);
 static void rdp(const std::vector<std::pair<cv::Point2f,int>> &points, double epsilon, std::vector<std::pair<cv::Point2f,int>> &out);
 void approxPolyDPWithIndices(const std::vector<cv::Point2f> &src, std::vector<cv::Point2f> &dst, std::vector<int> &indices, double epsilon, bool closed);
-void generateConvexHull(const int num_captures);
+void generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, auto depthQueue, float fx, float fy, float cx, float cy)
 
 int main() {
     // Create pipeline
@@ -78,8 +78,8 @@ int main() {
     float cy = intrinsics[1][2];
 
     // Depth thresholds in millimeters
-    int minDepth = 100;  // 0.1 meters
-    int maxDepth = 450; // 0.4 meters
+    const int minDepth = 100;  // 0.1 meters
+    const int maxDepth = 450; // 0.4 meters
 
     struct HullData {
         std::vector<cv::Point> hull;
@@ -91,7 +91,7 @@ int main() {
 
     // Convex Hull & Shortest Path generation functionality
     const int num_captures = 40;
-    generateConvexHull(num_captures);
+    generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy);
 
     int answr = 0;
     while( answr != 2 ){
@@ -99,7 +99,7 @@ int main() {
         std::cin >> answr;
 
         if( answr == 1 ){
-            generateConvexHull(num_captures);
+            generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy);
         } else if( answr == 2 ){
             break;
         }
@@ -108,7 +108,7 @@ int main() {
     return 0;
 }
 
-void generateConvexHull(const int num_captures){
+void generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, auto depthQueue, float fx, float fy, float cx, float cy){
     int i = 1;
     int nCaptPerAnalysis = num_captures;
     std::vector<HullData> netHulls;
