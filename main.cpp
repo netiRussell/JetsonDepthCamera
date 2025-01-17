@@ -1,10 +1,12 @@
-﻿#include <iostream>
+﻿// TODO: create a function that generates a convex hull and then waites for the user to press key to quit the program or generate a new capture. then, every time the camera is moved, its difference between the new location and the original one is reflected(via substraction or summation, idk) in the resulting coordinates of the convex hull to keep them universal(real-world)
+
+#include <iostream>
 #include <depthai/depthai.hpp>
 #include <opencv2/opencv.hpp>
 #include <cmath>
 #include <vector>
 #include <limits>
-#incude <numeric>
+#include <numeric>
 
 ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
 void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, double minDepth, cv::Mat displayImage );
@@ -13,6 +15,7 @@ void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, do
 static double pointLineDistance(const cv::Point2f &P, const cv::Point2f &A, const cv::Point2f &B);
 static void rdp(const std::vector<std::pair<cv::Point2f,int>> &points, double epsilon, std::vector<std::pair<cv::Point2f,int>> &out);
 void approxPolyDPWithIndices(const std::vector<cv::Point2f> &src, std::vector<cv::Point2f> &dst, std::vector<int> &indices, double epsilon, bool closed);
+void generateConvexHull(const int num_captures);
 
 int main() {
     // Create pipeline
@@ -86,10 +89,31 @@ int main() {
     };
 
 
+    // Convex Hull & Shortest Path generation functionality
+    const int num_captures = 40;
+    generateConvexHull(num_captures);
+
+    int answr = 0;
+    while( answr != 2 ){
+        std::cout << "Press 1 to generate a new convex hull, 2 to quit the program: ";
+        std::cin >> answr;
+
+        if( answr == 1 ){
+            generateConvexHull(num_captures);
+        } else if( answr == 2 ){
+            break;
+        }
+    }
+
+    return 0;
+}
+
+void generateConvexHull(const int num_captures){
     int i = 1;
-    int nCaptPerAnalysis = 40;
+    int nCaptPerAnalysis = num_captures;
     std::vector<HullData> netHulls;
     std::vector<double> minDepths;
+
     while (i <= nCaptPerAnalysis) {
         // Get depth frame
         auto depthFrame = depthQueue->get<dai::ImgFrame>();
@@ -231,11 +255,8 @@ int main() {
         i++;
     }
 
-    netHulls.clear();
     cv::waitKey(100); // Wait briefly (100 ms) to allow resources to close
     cv::destroyAllWindows(); // Explicitly close all OpenCV windows
-
-    return 0;
 }
 
 
@@ -348,7 +369,7 @@ void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, doubl
 
     // Display the result
     cv::imshow("Just the final points", justPoints);
-    cv::waitKey(0);
+    //cv::waitKey(0);
 
 
     std::cout << std::endl;
