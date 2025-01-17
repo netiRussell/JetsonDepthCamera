@@ -15,7 +15,16 @@ void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, do
 static double pointLineDistance(const cv::Point2f &P, const cv::Point2f &A, const cv::Point2f &B);
 static void rdp(const std::vector<std::pair<cv::Point2f,int>> &points, double epsilon, std::vector<std::pair<cv::Point2f,int>> &out);
 void approxPolyDPWithIndices(const std::vector<cv::Point2f> &src, std::vector<cv::Point2f> &dst, std::vector<int> &indices, double epsilon, bool closed);
-void generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, auto depthQueue, float fx, float fy, float cx, float cy)
+void generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, std::shared_ptr<dai::DataOutputQueue> depthQueue, float fx, float fy, float cx, float cy);
+
+
+struct HullData {
+    std::vector<cv::Point> hull;
+    bool isRealObject;
+    double area;
+    std::pair<double, double> coordinates;
+};
+
 
 int main() {
     // Create pipeline
@@ -81,14 +90,6 @@ int main() {
     const int minDepth = 100;  // 0.1 meters
     const int maxDepth = 450; // 0.4 meters
 
-    struct HullData {
-        std::vector<cv::Point> hull;
-        bool isRealObject;
-        double area;
-        std::pair<double, double> coordinates;
-    };
-
-
     // Convex Hull & Shortest Path generation functionality
     const int num_captures = 40;
     generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy);
@@ -108,7 +109,7 @@ int main() {
     return 0;
 }
 
-void generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, auto depthQueue, float fx, float fy, float cx, float cy){
+void generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, std::shared_ptr<dai::DataOutputQueue> depthQueue, float fx, float fy, float cx, float cy){
     int i = 1;
     int nCaptPerAnalysis = num_captures;
     std::vector<HullData> netHulls;
@@ -156,7 +157,7 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
             newHullData.isRealObject = false;     // Set the flag
             newHullData.area = area;        	  // Set the area
 
-            // Calculate the coordinates
+            // Calculate the the center of the current hull
             cv::Moments mu = cv::moments(hulls[i]);
             newHullData.coordinates = std::make_pair(mu.m10 / mu.m00, mu.m01 / mu.m00); // x, y
 
@@ -246,10 +247,6 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
             }
 
             analyzeCaptures(points, std::reduce(minDepths.begin(), minDepths.end()) / minDepths.size(), displayImage);
-
-            // To restart the loop:
-            // i = 1;
-            // Clear the netHulls vector: netHulls.clear();
         }
 
         i++;
@@ -289,13 +286,13 @@ ushort interpolateDepth(const cv::Mat& depthImage, int x, int y) {
 /// Generating a final convex hull with as little vertices as possible from the gathered points
 void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, double minDepth, cv::Mat displayImage){
     // Shape of gatheredCaptures = # of captures, # of convex hulls, # of coordinates, 5 coordinatex - X, Y, Z, cx, cy.
-    std::cout << "\n------------------------------------------------------------------------\n";
+    /* std::cout << "\n------------------------------------------------------------------------\n";
 
     // Main loop of the function
     std::cout << "\tCurrent Convex Hull size = " << gatheredPoints.size() << "\n";
 
     // Print out the minimal depth
-    std::cout << "--------------------------------------------------------------------------\n\n\n\nThe minimal depth of the object: " << minDepth << "mm" << std::endl;
+    std::cout << "--------------------------------------------------------------------------\n\n\n\nThe minimal depth of the object: " << minDepth << "mm" << std::endl; */
     minDepth /= 1000;
 
     // Project the resulted points
@@ -333,10 +330,12 @@ void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, doubl
     }
 
     // Print the final coordinates
+    /*
     std::cout << "--------------------------------------------------------------------------\n\n\n\nFinal Coordinates:" << std::endl;
     for( const std::array<float, 7> &coordinates : finalCoordinates ){
             std::cout << "\t\tPoint: X=" << coordinates[0] << "m, Y=" << coordinates[1] << "m, Z=" << coordinates[2] << "m" << std::endl;
     }
+    */
 
     std::cout << "--------------------------------------------------------------------------\n\n\n\nApprox Coordinates:" << std::endl;
     for( const std::array<float, 7> &coordinates : approxCoordinates ){
@@ -369,7 +368,7 @@ void analyzeCaptures( std::vector< std::array<float, 7> >& gatheredPoints, doubl
 
     // Display the result
     cv::imshow("Just the final points", justPoints);
-    //cv::waitKey(0);
+    cv::waitKey(0);
 
 
     std::cout << std::endl;
@@ -410,6 +409,7 @@ void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, do
 
 /// Projecting 3d points onto the 2d image plane
 void projectPoints(const std::vector< std::array<float, 7> >& hull, std::vector<cv::Point2f>& projectedPoints) {
+    // The structure: 0=X, 1=Y, 2=Z, 3=fx, 4=fy, 5=cx, 6=cy
 
     // The procedure
     for (const std::array<float, 7>& point : hull) {
