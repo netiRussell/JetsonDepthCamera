@@ -1,5 +1,6 @@
-﻿// TODO: Try to use the original depth values
-// TODO: Try other 2d to 3d conversion formulas
+﻿// TODO: Calibrate the camera to get the rectified intrinsic parameters
+// TODO: Make sure the intrinsics are rectified by checking the distortion coefficients and the intrinsics values offset from the center
+// TODO: Check if the perfomance is higher with the original or the minimal depth values (Zs)
 
 
 #include <iostream>
@@ -11,10 +12,12 @@
 #include <numeric>
 
 ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
-void analyzeCaptures( std::vector<cv::Point2f>& gatheredPoints, double minDepth, cv::Mat displayImage, float fx, float fy, float cx, float cy);
+void analyzeCaptures( std::vector< std::array<float, 3> >& gatheredPoints, double minDepth, cv::Mat displayImage, float fx, float fy, float cx, float cy);
 void projectPoints(const std::vector< std::array<float, 7> >& hull, std::vector<cv::Point2f>& projectedPoints);
 void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, double minDepth, bool final );
 void generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, std::shared_ptr<dai::DataOutputQueue> depthQueue, float fx, float fy, float cx, float cy);
+void arrayToPoint2f(std::vector< std::array<float, 3> >& gatheredPoints, std::vector<cv::Point2f>& gathered2fPoints);
+float findMatchingValues( const cv::Point2f& points, const std::vector<std::array<float, 3>>& arrayData );
 
 
 struct HullData {
@@ -78,12 +81,21 @@ int main() {
     // Retrieve calibration data
     auto calibData = device.readCalibration();
     auto intrinsics = calibData.getCameraIntrinsics(dai::CameraBoardSocket::CAM_C, 1280, 720);
+    
+    // TODO: delete
+    auto distortionCoeffs = calibData.getDistortionCoefficients(dai::CameraBoardSocket::CAM_C);
+    for (float value : distortionCoeffs){
+    	std::cout << value << std::endl;
+    }
 
     // Extract intrinsic parameters
     float fx = intrinsics[0][0];
     float fy = intrinsics[1][1];
     float cx = intrinsics[0][2];
     float cy = intrinsics[1][2];
+
+    // TODO: delete
+    std::cout << "cx = " << cx << " cy = " << cy << std::endl;
 
     // Depth thresholds in millimeters
     const int minDepth = 100;  // 0.1 meters
@@ -187,7 +199,7 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
             cv::applyColorMap(displayImage, displayImage, cv::COLORMAP_HOT);
 
             // TODO: change bg color based on minDepth
-                // displayImage.setTo( cv::Scalar(0, 0, 139) );
+            // displayImage.setTo( cv::Scalar(0, 0, 139) );
 	        cv::imshow("Just the object", displayImage);
 
 
@@ -228,7 +240,7 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
 
             // ! TODO: change the structure to have all of the coordinates in a single capture
             // Filter out coordinates for visualization
-            std::vector< cv::Point2f > points;
+            std::vector< std::array<float, 3> > points;
 
             for (int j = 0; j < netHulls.size(); j++) {
 
@@ -239,8 +251,8 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
 
                 for (const auto& point : netHulls[j].hull) {
                     // 2d pixel coordinates
-                    int x = point.x;
-                    int y = point.y;
+                    float x = point.x;
+                    float y = point.y;
 
                     ushort depthValue = depthImage.at<ushort>(y, x);
                     if (depthValue == 0){
@@ -251,11 +263,11 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
                             continue; // If still zero, skip the point
                     }
 
-                    // float Z = static_cast<float>(depthValue) / 1000.0f; // Convert mm to meters
+                    float Z = static_cast<float>(depthValue) / 1000.0f; // Convert mm to meters
                     // float X = (x - cx) * Z / fx;
                     // float Y = (y - cy) * Z / fy;
 
-                    points.push_back(cv::Point2f(x, y));
+                    points.push_back({x, y, Z});
                 }
 
             }
@@ -298,16 +310,20 @@ ushort interpolateDepth(const cv::Mat& depthImage, int x, int y) {
 }
 
 /// Generating a final convex hull with as little vertices as possible from the gathered points
-void analyzeCaptures( std::vector<cv::Point2f>& gatheredPoints, double minDepth, cv::Mat displayImage, float fx, float fy, float cx, float cy){
+void analyzeCaptures( std::vector< std::array<float, 3> >& gatheredPoints, double minDepth, cv::Mat displayImage, float fx, float fy, float cx, float cy){
 
     minDepth /= 1000; // Convert mm to meters
     
+    // Convert (x,y,z) points to (x,y)
+    std::vector<cv::Point2f> gathered2fPoints;
+    arrayToPoint2f(gatheredPoints, gathered2fPoints);
+
     // Graph all the points 
-    graphPoints(gatheredPoints, displayImage, minDepth, false);
+    graphPoints(gathered2fPoints, displayImage, minDepth, false);
 
     // Compute the convex hull of the projected points and store vertices
     std::vector<cv::Point2f> finalHull;
-    cv::convexHull(gatheredPoints, finalHull);
+    cv::convexHull(gathered2fPoints, finalHull);
 
     // Approximate the convex hull to get less vetices => better perfomance
     double arc_length = cv::arcLength(finalHull, true);
@@ -317,8 +333,14 @@ void analyzeCaptures( std::vector<cv::Point2f>& gatheredPoints, double minDepth,
     // Project the 2D points back to 3D
     std::vector<cv::Point2f> approxCoordinates(approxHull.size());
     for (int i = 0; i < approxHull.size(); i++){
-    	    approxCoordinates[i].x = (approxHull[i].x - cx) * minDepth / fx;
-    	    approxCoordinates[i].y = (approxHull[i].y - cy) * minDepth / fy;
+	    //TODO: exhaustive, to be changed:
+	    float Z = findMatchingValues(approxHull[i], gatheredPoints);
+	    if( Z == -1 ){
+		    std::cout << "[WARNING]: no Z corresponding found, skipping these x,y." << std::endl;
+	    }
+
+    	    approxCoordinates[i].x = (approxHull[i].x - cx) * Z / fx;
+    	    approxCoordinates[i].y = (approxHull[i].y - cy) * Z / fy;
     }    
 
     std::cout << "--------------------------------------------------------------------------\n\n\n\nApprox Coordinates:" << std::endl;
@@ -357,6 +379,31 @@ void analyzeCaptures( std::vector<cv::Point2f>& gatheredPoints, double minDepth,
 
     std::cout << std::endl;
 }
+
+
+/// Converting an array into Point2f
+void arrayToPoint2f(std::vector< std::array<float, 3> >& gatheredPoints, std::vector<cv::Point2f>& gathered2fPoints){
+	for( const std::array<float, 3>& point : gatheredPoints){
+		gathered2fPoints.push_back( cv::Point2f(point[0], point[1]) );
+	}
+}
+
+
+/// Temprorary way to find the corresponding Z values
+float findMatchingValues( const cv::Point2f& points, const std::vector<std::array<float, 3>>& arrayData ) {
+    // For each point, search exhaustively in arrayData
+    for (const auto& arr : arrayData) {
+        // Compare x and y
+        if (points.x == arr[0] && points.y == arr[1]) {
+            // If there's a match, return the value
+            return arr[2];
+    }
+	}
+
+    // No match case
+    return -1;
+}
+
 
 /// Graphing the points on the 2D image
 void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, double minDepth, bool final ){
@@ -405,3 +452,4 @@ void projectPoints(const std::vector< std::array<float, 7> >& hull, std::vector<
     }
 
 }
+
