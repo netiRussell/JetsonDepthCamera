@@ -1,5 +1,6 @@
-﻿// TODO: 3) Make sure the coordinates are correct even with the avg min depth applied to each one of them instead of the original one
-// TODO: 4) Maybe the problem is in the way I convert 2d to 3d. Check this forum question: https://stackoverflow.com/questions/12299870/computing-x-y-coordinate-3d-from-image-point
+﻿// TODO: Try to use the original depth values
+// TODO: Try other 2d to 3d conversion formulas
+
 
 #include <iostream>
 #include <depthai/depthai.hpp>
@@ -108,12 +109,12 @@ int main() {
 }
 
 void generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, std::shared_ptr<dai::DataOutputQueue> depthQueue, float fx, float fy, float cx, float cy){
-    int i = 1;
+    int counter = 1;
     int nCaptPerAnalysis = num_captures;
     std::vector<HullData> netHulls;
     std::vector<double> minDepths;
 
-    while (i <= nCaptPerAnalysis) {
+    while (counter <= nCaptPerAnalysis) {
         // Get depth frame
         auto depthFrame = depthQueue->get<dai::ImgFrame>();
         cv::Mat depthImage = depthFrame->getFrame();
@@ -121,6 +122,14 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
         // Threshold depth image to create mask
         cv::Mat mask;
         cv::inRange(depthImage, minDepth, maxDepth, mask);
+
+        // Check if the mask is empty (i.e., all pixels are 0)
+	if(cv::countNonZero(mask) == 0) {
+    		std::cout << "[WARNING] No pixels are found in the [" 
+              	<< minDepth << ", " << maxDepth 
+              	<< "] range. Skipping this iteration.\n";
+   	 continue; // Skip this iteration, since there's no object in range
+	}
 
         // Find the minimal depth within the depthImage with the threshold mask
         double minDepthOfObj;
@@ -130,6 +139,12 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
         // Find contours in the mask
         std::vector<std::vector<cv::Point>> contours;
         cv::findContours(mask, contours, cv::RETR_TREE, cv::CHAIN_APPROX_SIMPLE);
+
+	// Check if no contours are found
+	if (contours.empty()) {
+   		std::cout << "[WARNING] No valid contours are found. Skipping this iteration.\n";
+    		continue;
+	}
 
         // Compute convex hulls for each contour
         std::vector<std::vector<cv::Point>> hulls(contours.size());
@@ -164,7 +179,7 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
         }
 
         // Analyze and clear the hulls that don't represent real objects
-        if( i == nCaptPerAnalysis-1 ){
+        if( counter == nCaptPerAnalysis ){
             // Create an image to display
             cv::Mat displayImage;
             cv::normalize(mask, displayImage, 0, 255, cv::NORM_MINMAX, CV_8UC1);
@@ -248,7 +263,7 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
             analyzeCaptures(points, std::reduce(minDepths.begin(), minDepths.end()) / minDepths.size(), displayImage, fx, fy, cx, cy);
         }
 
-        i++;
+        counter++;
     }
 
     cv::waitKey(100); // Wait briefly (100 ms) to allow resources to close
@@ -300,14 +315,14 @@ void analyzeCaptures( std::vector<cv::Point2f>& gatheredPoints, double minDepth,
     cv::approxPolyDP(finalHull, approxHull, 0.01*arc_length, true); // epsilon 1% to 5% of the arc length
 
     // Project the 2D points back to 3D
-    std::vector< cv::Point2f > approxCoordinates;
-    for ( int i = 0; i < approxHull.size(); i++ ){
-        approxCoordinates[i].x = (approxHull[i].x - cx) * minDepth / fx;
-        approxCoordinates[i].y = (approxHull[i].y - cy) * minDepth / fy;
-    }
+    std::vector<cv::Point2f> approxCoordinates(approxHull.size());
+    for (int i = 0; i < approxHull.size(); i++){
+    	    approxCoordinates[i].x = (approxHull[i].x - cx) * minDepth / fx;
+    	    approxCoordinates[i].y = (approxHull[i].y - cy) * minDepth / fy;
+    }    
 
     std::cout << "--------------------------------------------------------------------------\n\n\n\nApprox Coordinates:" << std::endl;
-    for( const std::array<float, 2> &coordinates : approxCoordinates ){
+    for( const cv::Point2f &coordinates : approxCoordinates ){
             std::cout << "\t\tPoint: X=" << coordinates.x << "m, Y=" << coordinates.y << "m, Z=" << minDepth << "m" << std::endl;
     }
 
