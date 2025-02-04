@@ -1,7 +1,9 @@
-﻿// TODO: Calibrate the camera to get the rectified intrinsic parameters
-// TODO: Make sure the intrinsics are rectified by checking the distortion coefficients and the intrinsics values offset from the center
-// TODO: Check if the perfomance is higher with the original or the minimal depth values (Zs)
+﻿// TODO: check if the intrinsics I get are rectified
+// TODO: improve the quality of the image. why do I get bad depth image?
+// TODO: Stop the points from overlapping
 
+// negative x => left; positive y => down.
+// image is flipped in x-axis
 
 #include <iostream>
 #include <depthai/depthai.hpp>
@@ -99,10 +101,10 @@ int main() {
 
     // Depth thresholds in millimeters
     const int minDepth = 100;  // 0.1 meters
-    const int maxDepth = 450; // 0.4 meters
+    const int maxDepth = 550; // 0.55 meters
 
     // Convex Hull & Shortest Path generation functionality
-    const int num_captures = 40;
+    const int num_captures = 45;
     generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy);
 
     int answr = 0;
@@ -130,6 +132,13 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
         // Get depth frame
         auto depthFrame = depthQueue->get<dai::ImgFrame>();
         cv::Mat depthImage = depthFrame->getFrame();
+        
+        // TODO: delete
+        // Color and show the last capture
+        cv::Mat depthImage8U;
+        cv::normalize(depthImage, depthImage8U, 0, 255, cv::NORM_MINMAX, CV_8U);
+        cv::applyColorMap(depthImage8U, depthImage8U, cv::COLORMAP_HOT);
+        cv::imshow("Last Capture", depthImage8U); 
 
         // Threshold depth image to create mask
         cv::Mat mask;
@@ -199,8 +208,8 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
             cv::applyColorMap(displayImage, displayImage, cv::COLORMAP_HOT);
 
             // TODO: change bg color based on minDepth
-            // displayImage.setTo( cv::Scalar(0, 0, 139) );
-	        cv::imshow("Just the object", displayImage);
+                // displayImage.setTo( cv::Scalar(0, 0, 139) );
+	        cv::imshow("Only the object", displayImage);
 
 
             // Draw convex hulls on the image
@@ -339,14 +348,9 @@ void analyzeCaptures( std::vector< std::array<float, 3> >& gatheredPoints, doubl
 		    std::cout << "[WARNING]: no Z corresponding found, skipping these x,y." << std::endl;
 	    }
 
-    	    approxCoordinates[i].x = (approxHull[i].x - cx) * Z / fx;
-    	    approxCoordinates[i].y = (approxHull[i].y - cy) * Z / fy;
+        approxCoordinates[i].x = (approxHull[i].x - cx) * minDepth / fx;
+        approxCoordinates[i].y = (approxHull[i].y - cy) * minDepth / fy;
     }    
-
-    std::cout << "--------------------------------------------------------------------------\n\n\n\nApprox Coordinates:" << std::endl;
-    for( const cv::Point2f &coordinates : approxCoordinates ){
-            std::cout << "\t\tPoint: X=" << coordinates.x << "m, Y=" << coordinates.y << "m, Z=" << minDepth << "m" << std::endl;
-    }
 
     // Graph the final convex hull 
     graphPoints(approxHull, displayImage, minDepth, true);
@@ -355,25 +359,44 @@ void analyzeCaptures( std::vector< std::array<float, 3> >& gatheredPoints, doubl
     // -- Additional graph but special case -----------------------------------
     // Set up the display window and projection parameters
     int width = 1280, height = 720;
-    cv::Mat justPoints = cv::Mat::zeros(height, width, CV_8UC3);
+    cv::Mat image = cv::Mat::zeros(height, width, CV_8UC3);
 
     // Scale the circle size based on minimal depth of the object to simulate depth
     int radius = static_cast<int>(3 / minDepth);
     radius = std::max(1, std::min(20, radius));    // Clamp radius between 1 and 20
     cv::Scalar color(255, 0, 0);
 
-    // Draw each 3D point on the 2D image 
+    // Draw each 3D point on the 2D image
+    std::cout << "--------------------------------------------------------------------------\n\n\n\nApprox Coordinates:" << std::endl;
     std::vector<cv::Point> vertices;
     for (const cv::Point2f& pt2D : approxHull) {
         // Project the 3D point onto the 2D image plane
+        // TODO: is this needed? if not => delete
 	    vertices.push_back(pt2D);
 
-        // std::cout << "\t\tPoint: X=" << pt2D.x << " Y=" << pt2D.y << " Z=" << minDepth << std::endl; 
-        cv::circle(justPoints, pt2D, radius, color, -1);  // -1 fills the circle
+        cv::circle(image, pt2D, radius, color, -1);  // -1 fills the circle
+	    float x = (pt2D.x - cx) * minDepth / fx;
+    	float y = (pt2D.y - cy) * minDepth / fy;
+        cv::putText(image, "X= " + std::to_string(x) + "m, Y= " + std::to_string(y) + "m, Z=" + std::to_string(minDepth), pt2D, cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 1 );
+
+        std::cout << "\t\tApprox Point: X=" << x  << "m, Y=" << y  << "m, Z=" << minDepth << "m" << std::endl;
+
+        //TODO: exhaustive, to be changed:
+	    float Z = findMatchingValues(pt2D, gatheredPoints);
+	    if( Z == -1 ){
+		    std::cout << "[WARNING]: no Z corresponding found, skipping these x,y." << std::endl;
+	    }
+
+        x = (pt2D.x - cx) * Z / fx;
+    	y = (pt2D.y - cy) * Z / fy;
+        cv::circle(image, cv::Point2f (x, y), radius, cv::Scalar (0, 0, 255), -1);  // -1 fills the circle
+        cv::putText(image, "X= " + std::to_string(x) + "m, Y= " + std::to_string(y) + "m, Z=" + std::to_string(Z), cv::Point2f (x, y), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 1 );
+
+        std::cout << "\t\tReal Point: X=" << x << "m, Y=" << y << "m, Z=" << Z << "m" << "\n" << std::endl;
     }
 
     // Display the result
-    cv::imshow("Just the final points", justPoints);
+    cv::imshow("Just the final points", image);
     cv::waitKey(0);
 
 
@@ -391,17 +414,17 @@ void arrayToPoint2f(std::vector< std::array<float, 3> >& gatheredPoints, std::ve
 
 /// Temprorary way to find the corresponding Z values
 float findMatchingValues( const cv::Point2f& points, const std::vector<std::array<float, 3>>& arrayData ) {
-    // For each point, search exhaustively in arrayData
-    for (const auto& arr : arrayData) {
-        // Compare x and y
-        if (points.x == arr[0] && points.y == arr[1]) {
-            // If there's a match, return the value
-            return arr[2];
-    }
+        // For each point, search exhaustively in arrayData
+        for (const auto& arr : arrayData) {
+            	// Compare x and y
+            	if (points.x == arr[0] && points.y == arr[1]) {
+                	// If there's a match, return the value
+                	return arr[2];
+		}
 	}
 
-    // No match case
-    return -1;
+    	// No match case
+    	return -1;
 }
 
 
@@ -420,7 +443,7 @@ void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, do
     std::vector<cv::Point> vertices;
     for (const cv::Point2f& pt2D : hull) {
         // Project the 3D point onto the 2D image plane
-	    vertices.push_back(pt2D);
+	vertices.push_back(pt2D);
 
         // std::cout << "\t\tPoint: X=" << pt2D.x << " Y=" << pt2D.y << " Z=" << minDepth << std::endl; 
         cv::circle(image, pt2D, radius, color, -1);  // -1 fills the circle
