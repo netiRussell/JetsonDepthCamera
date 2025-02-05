@@ -1,4 +1,5 @@
-﻿// TODO: get rid of invalid contours and then make sure that hull is checked whether its empty( change it from array to vector to use the empty function to check if its empty)
+﻿
+// TODO: Universal point logic
 
 // negative x => left; positive y => down.
 // image is flipped in x-axis
@@ -127,7 +128,7 @@ switch(depthUnitEnum) {
     const int maxDepth = 550; // 0.55 meters
 
     // Convex Hull & Shortest Path generation functionality
-    const int num_captures = 50;
+    const int num_captures = 45;
     generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, 0, 0, 0);
 
     int answr = 0;
@@ -166,8 +167,8 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
         auto depthFrame = depthQueue->get<dai::ImgFrame>();
         cv::Mat depthImage = depthFrame->getFrame();
 
-        // TODO: does it actually help? If not => delete
-        if(counter < 5){
+        // Skip the first 15 captures
+        if(counter < 15){
             counter++;
             continue;
         }
@@ -209,11 +210,6 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
         // Compute convex hulls for each contour
         std::vector<std::vector<cv::Point>> hulls(contours.size());
         for (size_t i = 0; i < contours.size(); i++) {
-	    if(contours[i].size() < 3) {
-    		// Not enough points for hull; skip this contour
-		std::cout << "[WARNING] a contour with not enough points has been skipped." << std::endl;
-    		continue;
-            }
             cv::convexHull(contours[i], hulls[i]);
         }
 
@@ -223,10 +219,6 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
             std::vector< std::array<float, 7> > points; // Points of a single convex hull
 
             // Compute area in pixels and skip if the captured hull is just a noise
-	    if(hulls[i].empty()){
-	    	continue;
-	    }
-
             double area = cv::contourArea(hulls[i]);
             if( area < 500 ){
                 continue;
@@ -530,6 +522,5 @@ void projectPoints(const std::vector< std::array<float, 7> >& hull, std::vector<
     }
 
 }
-
 
 
