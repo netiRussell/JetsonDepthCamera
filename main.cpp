@@ -1,6 +1,5 @@
-﻿// TODO: check if the intrinsics I get are rectified
-// TODO: improve the quality of the image. why do I get bad depth image?
-// TODO: Stop the points from overlapping
+﻿// TODO: Skip the first 5 iterations
+// TODO: Universal point logic
 
 // negative x => left; positive y => down.
 // image is flipped in x-axis
@@ -17,7 +16,7 @@ ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
 void analyzeCaptures( std::vector< std::array<float, 3> >& gatheredPoints, double minDepth, cv::Mat displayImage, float fx, float fy, float cx, float cy);
 void projectPoints(const std::vector< std::array<float, 7> >& hull, std::vector<cv::Point2f>& projectedPoints);
 void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, double minDepth, bool final );
-void generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, std::shared_ptr<dai::DataOutputQueue> depthQueue, float fx, float fy, float cx, float cy);
+void generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, std::shared_ptr<dai::DataOutputQueue> depthQueue, float fx, float fy, float cx, float cy, float depthUnit);
 void arrayToPoint2f(std::vector< std::array<float, 3> >& gatheredPoints, std::vector<cv::Point2f>& gathered2fPoints);
 float findMatchingValues( const cv::Point2f& points, const std::vector<std::array<float, 3>>& arrayData );
 
@@ -50,12 +49,35 @@ int main() {
     monoRight->setResolution(dai::MonoCameraProperties::SensorResolution::THE_720_P);
     monoRight->setBoardSocket(dai::CameraBoardSocket::CAM_C);
 
+    stereo->setDepthAlign(dai::CameraBoardSocket::CAM_C);
+    stereo->setOutputSize(1280, 720);
+    
+
     // StereoDepth properties
     stereo->setDefaultProfilePreset(dai::node::StereoDepth::PresetMode::HIGH_DENSITY);
     stereo->initialConfig.setConfidenceThreshold(225);
     stereo->setLeftRightCheck(true);
     stereo->initialConfig.setMedianFilter(dai::MedianFilter::KERNEL_7x7);
     stereo->setExtendedDisparity(true);
+
+    // Getting stereo depth units
+    auto config = stereo -> initialConfig.get();
+    auto depthUnitEnum = config.algorithmControl.depthUnit;
+    float depthUnit = 1.f;
+switch(depthUnitEnum) {
+    case dai::RawStereoDepthConfig::AlgorithmControl::DepthUnit::MILLIMETER:
+        depthUnit = 0.001f;  // from mm to meters
+        break;
+    case dai::RawStereoDepthConfig::AlgorithmControl::DepthUnit::CENTIMETER:
+        depthUnit = 0.01f;   // from cm to meters
+        break;
+    case dai::RawStereoDepthConfig::AlgorithmControl::DepthUnit::METER:
+        depthUnit = 1.f;
+        break;
+
+    default:
+        std::cout << "[WARNING] no corresponding depth unit has been found." << std::endl;
+}
 
     /* Filters - can be used to improve the final output
     auto config = stereo->initialConfig.get();
@@ -105,7 +127,7 @@ int main() {
 
     // Convex Hull & Shortest Path generation functionality
     const int num_captures = 45;
-    generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy);
+    generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit);
 
     int answr = 0;
     while( answr != 2 ){
@@ -113,7 +135,7 @@ int main() {
         std::cin >> answr;
 
         if( answr == 1 ){
-            generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy);
+            generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit);
         } else if( answr == 2 ){
             break;
         }
@@ -122,7 +144,7 @@ int main() {
     return 0;
 }
 
-void generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, std::shared_ptr<dai::DataOutputQueue> depthQueue, float fx, float fy, float cx, float cy){
+void generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, std::shared_ptr<dai::DataOutputQueue> depthQueue, float fx, float fy, float cx, float cy, float depthUnit){
     int counter = 1;
     int nCaptPerAnalysis = num_captures;
     std::vector<HullData> netHulls;
@@ -265,6 +287,9 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
 
                     ushort depthValue = depthImage.at<ushort>(y, x);
                     if (depthValue == 0){
+                        //std::cout << "[WARNING] depth value of x = " << x << ", y = " << y << " is invalid!" << std::endl;
+                        continue; // ! TODO: make sure its ok to skip
+
                         // Try to interpolate depth from neighboring pixels
                         depthValue = interpolateDepth(depthImage, x, y);
 
@@ -272,7 +297,7 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
                             continue; // If still zero, skip the point
                     }
 
-                    float Z = static_cast<float>(depthValue) / 1000.0f; // Convert mm to meters
+                    float Z = static_cast<float>(depthValue)*depthUnit; // Convert mm to meters
                     // float X = (x - cx) * Z / fx;
                     // float Y = (y - cy) * Z / fy;
 
@@ -380,7 +405,8 @@ void analyzeCaptures( std::vector< std::array<float, 3> >& gatheredPoints, doubl
         cv::putText(image, "X= " + std::to_string(x) + "m, Y= " + std::to_string(y) + "m, Z=" + std::to_string(minDepth), pt2D, cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 1 );
 
         std::cout << "\t\tApprox Point: X=" << x  << "m, Y=" << y  << "m, Z=" << minDepth << "m" << std::endl;
-
+        
+        /* Calculated from detphImage
         //TODO: exhaustive, to be changed:
 	    float Z = findMatchingValues(pt2D, gatheredPoints);
 	    if( Z == -1 ){
@@ -393,7 +419,9 @@ void analyzeCaptures( std::vector< std::array<float, 3> >& gatheredPoints, doubl
         cv::putText(image, "X= " + std::to_string(x) + "m, Y= " + std::to_string(y) + "m, Z=" + std::to_string(Z), cv::Point2f (x, y), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 1 );
 
         std::cout << "\t\tReal Point: X=" << x << "m, Y=" << y << "m, Z=" << Z << "m" << "\n" << std::endl;
+        */
     }
+    
 
     // Display the result
     cv::imshow("Just the final points", image);
@@ -475,4 +503,5 @@ void projectPoints(const std::vector< std::array<float, 7> >& hull, std::vector<
     }
 
 }
+
 
