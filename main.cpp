@@ -1,4 +1,5 @@
 ﻿// TODO: get rid of invalid contours and then make sure that hull is checked whether its empty( change it from array to vector to use the empty function to check if its empty)
+// TODO: make sure that the skipping of the first 5 captures is actually needed
 
 // negative x => left; positive y => down.
 // image is flipped in x-axis
@@ -169,6 +170,7 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
         // TODO: does it actually help? If not => delete
         if(counter < 5){
             counter++;
+            std::cout << "A cpature is skipped" << std::endl;
             continue;
         }
         
