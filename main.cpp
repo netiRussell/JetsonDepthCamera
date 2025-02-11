@@ -1,4 +1,4 @@
-﻿// TODO: get rid of invalid contours and then make sure that hull is checked whether its empty( change it from array to vector to use the empty function to check if its empty)
+﻿// TODO: get rid of invalid contours and then make sure that hull is checked whether its empty( change it from array to vector to use the empty function to check if its empty )
 // TODO: make sure that the skipping of the first 5 captures is actually needed
 
 // negative x => left; positive y => down.
@@ -19,11 +19,12 @@ void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, do
 void generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, std::shared_ptr<dai::DataOutputQueue> depthQueue, float fx, float fy, float cx, float cy, float depthUnit, float newX, float newY, float newZ);
 void arrayToPoint2f(std::vector< std::array<float, 3> >& gatheredPoints, std::vector<cv::Point2f>& gathered2fPoints);
 float findMatchingValues( const cv::Point2f& points, const std::vector<std::array<float, 3>>& arrayData );
+double findMedian( std::vector<double> v, int n );
 
 
 struct HullData {
     std::vector<cv::Point> hull;
-    bool isRealObject;
+    int isRealObject;
     double area;
     std::pair<double, double> coordinates;
 };
@@ -64,20 +65,20 @@ int main() {
     auto config = stereo -> initialConfig.get();
     auto depthUnitEnum = config.algorithmControl.depthUnit;
     float depthUnit = 1.f;
-switch(depthUnitEnum) {
-    case dai::RawStereoDepthConfig::AlgorithmControl::DepthUnit::MILLIMETER:
-        depthUnit = 0.001f;  // from mm to meters
-        break;
-    case dai::RawStereoDepthConfig::AlgorithmControl::DepthUnit::CENTIMETER:
-        depthUnit = 0.01f;   // from cm to meters
-        break;
-    case dai::RawStereoDepthConfig::AlgorithmControl::DepthUnit::METER:
-        depthUnit = 1.f;
-        break;
+    switch(depthUnitEnum) {
+        case dai::RawStereoDepthConfig::AlgorithmControl::DepthUnit::MILLIMETER:
+            depthUnit = 0.001f;  // from mm to meters
+            break;
+        case dai::RawStereoDepthConfig::AlgorithmControl::DepthUnit::CENTIMETER:
+            depthUnit = 0.01f;   // from cm to meters
+            break;
+        case dai::RawStereoDepthConfig::AlgorithmControl::DepthUnit::METER:
+            depthUnit = 1.f;
+            break;
 
-    default:
-        std::cout << "[WARNING] no corresponding depth unit has been found." << std::endl;
-}
+        default:
+            std::cout << "[WARNING] no corresponding depth unit has been found." << std::endl;
+    }
 
     /* Filters - can be used to improve the final output
     auto config = stereo->initialConfig.get();
@@ -148,7 +149,7 @@ switch(depthUnitEnum) {
             std::cin >> newZ;
 
             generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, newX, newY, newZ);
-        } else if( answr == 3 ){
+        } else{
             break;
         }
     }
@@ -170,7 +171,7 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
         // TODO: does it actually help? If not => delete
         if(counter < 5){
             counter++;
-            std::cout << "A cpature is skipped" << std::endl;
+            std::cout << "A capture is skipped" << std::endl;
             continue;
         }
         
@@ -202,21 +203,17 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
         std::vector<std::vector<cv::Point>> contours;
         cv::findContours(mask, contours, cv::RETR_TREE, cv::CHAIN_APPROX_SIMPLE);
 
-        // Check if no contours are found
-        if (contours.empty()) {
-            std::cout << "[WARNING] No valid contours are found. Skipping this iteration.\n";
-                continue;
-        }
 
         // Compute convex hulls for each contour
-        std::vector<std::vector<cv::Point>> hulls(contours.size());
+        std::vector<std::vector<cv::Point>> hulls;
         for (size_t i = 0; i < contours.size(); i++) {
-	    if(contours[i].size() < 3) {
-    		// Not enough points for hull; skip this contour
-		std::cout << "[WARNING] a contour with not enough points has been skipped." << std::endl;
-    		continue;
+            if(contours[i].size() < 3) {
+                // Not enough points for hull; skip this contour.
+                continue;
             }
-            cv::convexHull(contours[i], hulls[i]);
+            std::vector<cv::Point> hull;
+            cv::convexHull(contours[i], hull);
+            hulls.push_back(hull);
         }
 
         // Filter out noise
@@ -225,9 +222,9 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
             std::vector< std::array<float, 7> > points; // Points of a single convex hull
 
             // Compute area in pixels and skip if the captured hull is just a noise
-	    if(hulls[i].empty()){
-	    	continue;
-	    }
+            if(hulls[i].empty()){
+                continue;
+            }
 
             double area = cv::contourArea(hulls[i]);
             if( area < 500 ){
@@ -238,7 +235,7 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
             // Initialize the hull for further analysis
             HullData newHullData;
             newHullData.hull = hulls[i];          // Assign the vector of points
-            newHullData.isRealObject = false;     // Set the flag
+            newHullData.isRealObject = 0;     // Set the flag
             newHullData.area = area;        	  // Set the area
 
             // Calculate the the center of the current hull
@@ -278,15 +275,15 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
                 for (size_t k = j+1; k < netHulls.size(); k++) {
 
                     // Make sure the hull hasn't been recognized yet
-                    if( netHulls[k].isRealObject == true ){
+                    if( netHulls[k].isRealObject >= 10 ){
                             continue;
                     }
 
                     // Make sure the area and the coordinates are similar
                     // ! TODO: play with the number to increase precision
                     if( fabs(netHulls[j].area - netHulls[k].area) <= 100 && (fabs(netHulls[j].coordinates.first - netHulls[k].coordinates.first) <= 0.5 && fabs(netHulls[j].coordinates.second - netHulls[k].coordinates.second) <= 0.5) ){
-                        netHulls[j].isRealObject = true;
-                        netHulls[k].isRealObject = true;
+                        netHulls[j].isRealObject++;
+                        netHulls[k].isRealObject++;
 
                         // std::cout << "\t Considered Area = " << netHulls[k].area << std::endl;
                         // std::cout << "Hull " << j << ": Centroid = (" << netHulls[j].coordinates.first << ", " << netHulls[j].coordinates.second << ")" << std::endl;
@@ -334,7 +331,10 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
 
             }
 
-            analyzeCaptures(points, std::reduce(minDepths.begin(), minDepths.end()) / minDepths.size(), displayImage, fx, fy, cx, cy, newX, newY, newZ);
+            // TODO: debug and delete
+            std::cout << "Avg: " << std::reduce(minDepths.begin(), minDepths.end()) / minDepths.size() << std::endl;
+            
+	    analyzeCaptures(points, findMedian(minDepths, minDepths.size()), displayImage, fx, fy, cx, cy, newX, newY, newZ);
         }
 
         counter++;
@@ -430,10 +430,10 @@ void analyzeCaptures( std::vector< std::array<float, 3> >& gatheredPoints, doubl
         cv::circle(image, pt2D, radius, color, -1);  // -1 fills the circle
 	    float x = (pt2D.x - cx) * minDepth / fx;
     	float y = (pt2D.y - cy) * minDepth / fy;
-        cv::putText(image, "X= " + std::to_string(x) + "m, Y= " + std::to_string(y) + "m, Z=" + std::to_string(minDepth), pt2D, cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 1 );
+        cv::putText(image, "X= " + std::to_string(x) + "m, Y= " + std::to_string(-y) + "m, Z=" + std::to_string(minDepth), pt2D, cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 1 );
 
-        std::cout << "\tRelative Point: X=" << x  << "m, Y=" << y  << "m, Z=" << minDepth << "m" << std::endl;
-        std::cout << "\t\tUniversal Point: X=" << x + newX  << "m, Y=" << y + newY  << "m, Z=" << minDepth + newZ << "m" << std::endl;
+        std::cout << "\tRelative Point: X=" << x  << "m, Y=" << -y  << "m, Z=" << minDepth << "m" << std::endl;
+        std::cout << "\t\tUniversal Point: X=" << x + newX  << "m, Y=" << -(y + newY)  << "m, Z=" << minDepth + newZ << "m" << std::endl;
         
         /* Calculated from detphImage
         //TODO: exhaustive, to be changed:
@@ -532,6 +532,21 @@ void projectPoints(const std::vector< std::array<float, 7> >& hull, std::vector<
     }
 
 }
+
+// Function for calculating median
+double findMedian( std::vector<double> v, int n ){
+    // Sort the vector
+	std:sort(v.begin(), v.end());
+
+    // Check if the number of elements is odd
+    if (n % 2 != 0)
+        return (double)v[n / 2];
+
+    // If the number of elements is even, return the average
+    // of the two middle elements
+    return (double)(v[(n - 1) / 2] + v[n / 2]) / 2.0;
+}
+
 
 
 
