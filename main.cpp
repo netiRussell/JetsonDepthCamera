@@ -1,7 +1,4 @@
-﻿// TODO: get rid of invalid contours and then make sure that hull is checked whether its empty( change it from array to vector to use the empty function to check if its empty )
-// TODO: make sure that the skipping of the first 5 captures is actually needed
-
-// negative x => left; positive y => down.
+﻿// negative x => left; positive y => down.
 // image is flipped in x-axis
 
 #include <iostream>
@@ -26,6 +23,7 @@ struct HullData {
     std::vector<cv::Point> hull;
     int isRealObject;
     double area;
+    double minDepth;
     std::pair<double, double> coordinates;
 };
 
@@ -197,7 +195,6 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
         // Find the minimal depth within the depthImage with the threshold mask
         double minDepthOfObj;
         cv::minMaxLoc(depthImage, &minDepthOfObj, nullptr, nullptr, nullptr, mask);
-        minDepths.push_back(minDepthOfObj);
 
         // Find contours in the mask
         std::vector<std::vector<cv::Point>> contours;
@@ -237,6 +234,7 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
             newHullData.hull = hulls[i];          // Assign the vector of points
             newHullData.isRealObject = 0;     // Set the flag
             newHullData.area = area;        	  // Set the area
+            newHullData.minDepth = minDepthOfObj; // Set the minimal depth
 
             // Calculate the the center of the current hull
             cv::Moments mu = cv::moments(hulls[i]);
@@ -275,13 +273,12 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
                 for (size_t k = j+1; k < netHulls.size(); k++) {
 
                     // Make sure the hull hasn't been recognized yet
-                    if( netHulls[k].isRealObject >= 10 ){
+                    if( netHulls[k].isRealObject >= 3 ){
                             continue;
                     }
 
                     // Make sure the area and the coordinates are similar
-                    // ! TODO: play with the number to increase precision
-                    if( fabs(netHulls[j].area - netHulls[k].area) <= 100 && (fabs(netHulls[j].coordinates.first - netHulls[k].coordinates.first) <= 0.5 && fabs(netHulls[j].coordinates.second - netHulls[k].coordinates.second) <= 0.5) ){
+                    if( fabs(netHulls[j].area - netHulls[k].area) <= 80 && (fabs(netHulls[j].coordinates.first - netHulls[k].coordinates.first) <= 0.4 && fabs(netHulls[j].coordinates.second - netHulls[k].coordinates.second) <= 0.4) ){
                         netHulls[j].isRealObject++;
                         netHulls[k].isRealObject++;
 
@@ -301,9 +298,11 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
             for (int j = 0; j < netHulls.size(); j++) {
 
                 // Make sure the hull is recognized
-                if( netHulls[j].isRealObject == false ){
+                if( netHulls[j].isRealObject < 3 ){
                         continue;
                 }
+
+                minDepths.push_back(netHulls[j].minDepth);
 
                 for (const auto& point : netHulls[j].hull) {
                     // 2d pixel coordinates
@@ -332,7 +331,10 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
             }
 
             // TODO: debug and delete
-            std::cout << "Avg: " << std::reduce(minDepths.begin(), minDepths.end()) / minDepths.size() << std::endl;
+            for( int k = 0; k < minDepths.size(); k++ ){
+                std::cout << minDepths[k] << std::endl; 
+            }
+		    std::cout << "Avg: " << std::reduce(minDepths.begin(), minDepths.end()) / minDepths.size() << std::endl;
             
 	    analyzeCaptures(points, findMedian(minDepths, minDepths.size()), displayImage, fx, fy, cx, cy, newX, newY, newZ);
         }
