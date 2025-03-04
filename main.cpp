@@ -1,5 +1,6 @@
 ﻿// negative x => left; positive y => down.
 // image is flipped in x-axis
+// TODO: connect the generated convex hull to the shortest path finding component
 
 #include <iostream>
 #include <depthai/depthai.hpp>
@@ -8,16 +9,24 @@
 #include <vector>
 #include <limits>
 #include <numeric>
+#include <map>
+#include <set>
+#include <queue>
+#include <tuple>
+#include <algorithm>
+#include <string>
+#include <sstream>
+#include <geos_c.h>
+#include <chrono>
 
 ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
-void analyzeCaptures( std::vector< std::array<float, 3> >& gatheredPoints, double minDepth, cv::Mat displayImage, float fx, float fy, float cx, float cy, float newX, float newY, float newZ);
+std::vector< std::array<double, 3> > analyzeCaptures( std::vector< std::array<float, 3> >& gatheredPoints, double minDepth, cv::Mat displayImage, float fx, float fy, float cx, float cy, float newX, float newY, float newZ);
 void projectPoints(const std::vector< std::array<float, 7> >& hull, std::vector<cv::Point2f>& projectedPoints);
 void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, double minDepth, bool final );
-void generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, std::shared_ptr<dai::DataOutputQueue> depthQueue, float fx, float fy, float cx, float cy, float depthUnit, float newX, float newY, float newZ);
+std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, std::shared_ptr<dai::DataOutputQueue> depthQueue, float fx, float fy, float cx, float cy, float depthUnit, float newX, float newY, float newZ);
 void arrayToPoint2f(std::vector< std::array<float, 3> >& gatheredPoints, std::vector<cv::Point2f>& gathered2fPoints);
 float findMatchingValues( const cv::Point2f& points, const std::vector<std::array<float, 3>>& arrayData );
 double findMedian( std::vector<double> v, int n );
-
 
 struct HullData {
     std::vector<cv::Point> hull;
@@ -26,6 +35,59 @@ struct HullData {
     double minDepth;
     std::pair<double, double> coordinates;
 };
+
+// Shortest path finding component --------------------------------------------
+// Convex hull vertices
+static double cube_vertices[][3] = {
+    {0.0644393, 0.15343, 0.351},
+    {-0.00943387, 0.152119, 0.351},
+    {-0.00899675, 0.042429, 0.351},
+    {0.0618166, 0.0463621, 0.351}
+};
+// Get the size of the first dimension (number of rows)
+int num_rows = sizeof(cube_vertices) / sizeof(cube_vertices[0]);
+
+// Source and end points
+static double source[3] = {0, 0, 0};
+static double endp[3]   = {0, 0, 0.5}; // go 50cm forward
+
+struct Point {
+    double x,y,z;
+};
+
+inline bool operator<(const Point &a, const Point &b) {
+    if (a.x != b.x) return a.x < b.x;
+    if (a.y != b.y) return a.y < b.y;
+    return a.z < b.z;
+}
+
+inline bool operator==(const Point &a, const Point &b) {
+    return (a.x == b.x && a.y == b.y && a.z == b.z);
+}
+
+struct Edge {
+    Point node;
+    double weight;
+};
+
+std::map<Point, std::vector<Edge>> graph;
+
+// Create a global GEOS context
+GEOSContextHandle_t geos_ctx = nullptr;
+
+std::vector<Point> astar_path(const Point &start, const Point &goal);
+void add_edges_without_intersection(const Point &point, const std::vector<std::pair<Point,Point>> &cube_edges);
+std::vector<std::pair<Point,Point>> add_outer_edges_cube();
+bool segments_intersect_no_touches_geos(const Point &A, const Point &B, const Point &C, const Point &D);
+double distance3D(const Point &a, const Point &b);
+double distance2D(const Point &a, const Point &b);
+Point arrToPoint(const double arr[3]);
+void add_node(const Point &p);
+void add_edge(const Point &u, const Point &v, double w);
+std::string fmtPoint(const Point &p);
+std::string fmtArray(const Point &p);
+std::string fmtEdgeAsArrays(const Point &p1, const Point &p2);
+// -------------------------------------------------------------------------
 
 
 int main() {
@@ -122,21 +184,78 @@ int main() {
     // TODO: delete
     //std::cout << "cx = " << cx << " cy = " << cy << std::endl;
 
-    // Depth thresholds in millimeters
-    const int minDepth = 100;  // 0.1 meters
-    const int maxDepth = 550; // 0.55 meters
+    // Depth thresholds in millimeters (1000mm = 1m)
+    const int minDepth = 2;
+    const int maxDepth = 550;
 
     // Convex Hull & Shortest Path generation functionality
     const int num_captures = 50;
-    generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, 0, 0, 0);
 
+    // -- First launch --
+    // Record the start time
+    auto start_time = std::chrono::high_resolution_clock::now();
+
+    // Compute the convex hull
+    std::vector< std::array<double, 3> > convexHull = generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, 0, 0, 0);
+
+    // Initialize GEOS
+    geos_ctx = GEOS_init_r();
+
+    Point vs[num_rows];
+    for (int i=0;i<num_rows;i++) vs[i]=arrToPoint(cube_vertices[i]);
+    Point s = arrToPoint(source);
+    Point e = arrToPoint(endp);
+
+    // Add convex hull vertices as nodes
+    for (int i=0;i<num_rows;i++) add_node(vs[i]);
+    add_node(s);
+    add_node(e);
+
+    // Add convex hull edges
+    auto cube_edges = add_outer_edges_cube();
+
+    // Add edges from source
+    //std::cout << "Adding edges from source:\n";
+    add_edges_without_intersection(s, cube_edges);
+
+    // Add edges from end
+    //std::cout << "\nAdding edges from end:\n";
+    add_edges_without_intersection(e, cube_edges);
+
+    // A* search
+    std::vector<Point> path = astar_path(s, e);
+    
+    if (!path.empty()) {
+        std::cout << "\nShortest path found by A* algorithm:\n[";
+        for (auto &p: path) std::cout << fmtPoint(p) << " ";
+        std::cout << "]\n";
+    } else {
+        std::cout << "No path found.\n";
+    }
+
+    GEOS_finish_r(geos_ctx);
+
+    // Record the end time
+    auto end_time = std::chrono::high_resolution_clock::now();
+        
+    // Calculate and print execution time
+    std::chrono::duration<double> duration = end_time - start_time;
+    std::cout << "\nExecution time: " << duration.count() << " seconds\n";
+
+    // -- Secnd launch and beyound --
     int answr = 0;
     while( answr != 3 ){
         std::cout << "Press:\n\t1 to generate a new convex hull, \n\t2 to generate a new convex hull with a new position, \n\t3 if your want to quit the program.\n\nInput = ";
         std::cin >> answr;
 
+        // Record the start time
+        start_time = std::chrono::high_resolution_clock::now();
+
         if( answr == 1 ){
-            generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, 0, 0, 0);
+
+            // Compute the convex hull
+            convexHull = generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, 0, 0, 0);
+
         } else if( answr == 2 ){
             float newX, newY, newZ;
             std::cout << "The X of the new position = ";
@@ -146,32 +265,71 @@ int main() {
             std::cout << "The Z of the new position = ";
             std::cin >> newZ;
 
-            generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, newX, newY, newZ);
+            // Compute the convex hull
+            convexHull = generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, newX, newY, newZ);
         } else{
             break;
         }
+
+        // Initialize GEOS
+        geos_ctx = GEOS_init_r();
+
+        Point vs[num_rows];
+        for (int i=0;i<num_rows;i++) vs[i]=arrToPoint(cube_vertices[i]);
+        Point s = arrToPoint(source);
+        Point e = arrToPoint(endp);
+
+        // Add convex hull vertices as nodes
+        for (int i=0;i<num_rows;i++) add_node(vs[i]);
+        add_node(s);
+        add_node(e);
+
+        // Add convex hull edges
+        cube_edges = add_outer_edges_cube();
+
+        // Add edges from source
+        //std::cout << "Adding edges from source:\n";
+        add_edges_without_intersection(s, cube_edges);
+
+        // Add edges from end
+        //std::cout << "\nAdding edges from end:\n";
+        add_edges_without_intersection(e, cube_edges);
+
+        // A* search
+        path = astar_path(s, e);
+        
+        if (!path.empty()) {
+            std::cout << "\nShortest path found by A* algorithm:\n[";
+            for (auto &p: path) std::cout << fmtPoint(p) << " ";
+            std::cout << "]\n";
+        } else {
+            std::cout << "No path found.\n";
+        }
+
+        GEOS_finish_r(geos_ctx);
+
+        // Record the end time
+        end_time = std::chrono::high_resolution_clock::now();
+            
+        // Calculate and print execution time
+        duration = end_time - start_time;
+        std::cout << "\nExecution time: " << duration.count() << " seconds\n";
     }
 
     return 0;
 }
 
-void generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, std::shared_ptr<dai::DataOutputQueue> depthQueue, float fx, float fy, float cx, float cy, float depthUnit, float newX, float newY, float newZ){
+std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, std::shared_ptr<dai::DataOutputQueue> depthQueue, float fx, float fy, float cx, float cy, float depthUnit, float newX, float newY, float newZ){
     int counter = 1;
     int nCaptPerAnalysis = num_captures;
     std::vector<HullData> netHulls;
     std::vector<double> minDepths;
+    std::vector< std::array<double, 3> > finalOutput;
 
     while (counter <= nCaptPerAnalysis) {
         // Get depth frame
         auto depthFrame = depthQueue->get<dai::ImgFrame>();
         cv::Mat depthImage = depthFrame->getFrame();
-
-        // TODO: does it actually help? If not => delete
-        if(counter < 5){
-            counter++;
-            std::cout << "A capture is skipped" << std::endl;
-            continue;
-        }
         
         // TODO: delete
         // Color and show the last capture
@@ -224,7 +382,7 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
             }
 
             double area = cv::contourArea(hulls[i]);
-            if( area < 500 ){
+            if( area < 100 ){
                 continue;
             }
 
@@ -278,7 +436,7 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
                     }
 
                     // Make sure the area and the coordinates are similar
-                    if( fabs(netHulls[j].area - netHulls[k].area) <= 80 && (fabs(netHulls[j].coordinates.first - netHulls[k].coordinates.first) <= 0.4 && fabs(netHulls[j].coordinates.second - netHulls[k].coordinates.second) <= 0.4) ){
+                    if( fabs(netHulls[j].area - netHulls[k].area) <= 100 && (fabs(netHulls[j].coordinates.first - netHulls[k].coordinates.first) <= 0.5 && fabs(netHulls[j].coordinates.second - netHulls[k].coordinates.second) <= 0.5) ){
                         netHulls[j].isRealObject++;
                         netHulls[k].isRealObject++;
 
@@ -336,7 +494,7 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
             }
 		    std::cout << "Avg: " << std::reduce(minDepths.begin(), minDepths.end()) / minDepths.size() << std::endl;
             
-	    analyzeCaptures(points, findMedian(minDepths, minDepths.size()), displayImage, fx, fy, cx, cy, newX, newY, newZ);
+	        finalOutput = analyzeCaptures(points, findMedian(minDepths, minDepths.size()), displayImage, fx, fy, cx, cy, newX, newY, newZ);
         }
 
         counter++;
@@ -344,6 +502,8 @@ void generateConvexHull(const int num_captures, const int minDepth, const int ma
 
     cv::waitKey(100); // Wait briefly (100 ms) to allow resources to close
     cv::destroyAllWindows(); // Explicitly close all OpenCV windows
+
+    return finalOutput;
 }
 
 // TODO: redundant? Delete if yes
@@ -374,7 +534,7 @@ ushort interpolateDepth(const cv::Mat& depthImage, int x, int y) {
 }
 
 /// Generating a final convex hull with as little vertices as possible from the gathered points
-void analyzeCaptures( std::vector< std::array<float, 3> >& gatheredPoints, double minDepth, cv::Mat displayImage, float fx, float fy, float cx, float cy, float newX, float newY, float newZ){
+std::vector< std::array<double, 3> > analyzeCaptures( std::vector< std::array<float, 3> >& gatheredPoints, double minDepth, cv::Mat displayImage, float fx, float fy, float cx, float cy, float newX, float newY, float newZ){
 
     minDepth /= 1000; // Convert mm to meters
     
@@ -423,18 +583,23 @@ void analyzeCaptures( std::vector< std::array<float, 3> >& gatheredPoints, doubl
 
     // Draw each 3D point on the 2D image
     std::cout << "--------------------------------------------------------------------------\n\n\n\nApprox Coordinates:" << std::endl;
-    std::vector<cv::Point> vertices;
+    std::vector< std::array<double, 3> > finalOutput;
     for (const cv::Point2f& pt2D : approxHull) {
-        // Project the 3D point onto the 2D image plane
-        // TODO: is this needed? if not => delete
-	    vertices.push_back(pt2D);
-
+        
+        // Draw the point on the image
         cv::circle(image, pt2D, radius, color, -1);  // -1 fills the circle
 	    float x = (pt2D.x - cx) * minDepth / fx;
     	float y = (pt2D.y - cy) * minDepth / fy;
         cv::putText(image, "X= " + std::to_string(x) + "m, Y= " + std::to_string(-y) + "m, Z=" + std::to_string(minDepth), pt2D, cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 1 );
 
         std::cout << "\tRelative Point: X=" << x  << "m, Y=" << -y  << "m, Z=" << minDepth << "m" << std::endl;
+
+        // Add the points to the final output holder:
+        x = x + newX;
+        y = -(y + newY);
+        float z = minDepth + newZ;
+        finalOutput.push_back({x, y, z});
+
         std::cout << "\t\tUniversal Point: X=" << x + newX  << "m, Y=" << -(y + newY)  << "m, Z=" << minDepth + newZ << "m" << std::endl;
         
         /* Calculated from detphImage
@@ -458,8 +623,9 @@ void analyzeCaptures( std::vector< std::array<float, 3> >& gatheredPoints, doubl
     cv::imshow("Just the final points", image);
     cv::waitKey(0);
 
-
     std::cout << std::endl;
+
+    return finalOutput;
 }
 
 
@@ -502,7 +668,7 @@ void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, do
     std::vector<cv::Point> vertices;
     for (const cv::Point2f& pt2D : hull) {
         // Project the 3D point onto the 2D image plane
-	vertices.push_back(pt2D);
+	    vertices.push_back(pt2D);
 
         // std::cout << "\t\tPoint: X=" << pt2D.x << " Y=" << pt2D.y << " Z=" << minDepth << std::endl; 
         cv::circle(image, pt2D, radius, color, -1);  // -1 fills the circle
@@ -510,11 +676,11 @@ void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, do
 
     // Display the result
     if( final == true ){
-	cv::imshow("Final Hull", image);
-	cv::waitKey(0);
+        cv::imshow("Final Hull", image);
+        cv::waitKey(0);
     } else {
-	cv::imshow("All points combined", image);
-	// Draw contours
+        cv::imshow("All points combined", image);
+        // Draw contours
     	cv::polylines(image, vertices, true, color, 2);
     }
 
@@ -551,4 +717,181 @@ double findMedian( std::vector<double> v, int n ){
 
 
 
+// Shortest path finding components --------------------------------------------
+Point arrToPoint(const double arr[3]) {
+    Point p; p.x=arr[0]; p.y=arr[1]; p.z=arr[2]; return p;
+}
+
+void add_node(const Point &p) {
+    if (graph.find(p)==graph.end()) graph[p]=std::vector<Edge>();
+}
+
+void add_edge(const Point &u, const Point &v, double w) {
+    graph[u].push_back({v,w});
+    graph[v].push_back({u,w});
+}
+
+
+std::string fmtPoint(const Point &p) {
+    std::ostringstream oss;
+    oss << "(" << p.x << ", " << p.y << ", " << p.z << ")";
+    return oss.str();
+}
+
+
+std::string fmtArray(const Point &p) {
+    std::ostringstream oss;
+    oss << "array([" << p.x << ", " << p.y << ", " << p.z << "])";
+    return oss.str();
+}
+
+std::string fmtEdgeAsArrays(const Point &p1, const Point &p2) {
+    std::ostringstream oss;
+    oss << "(" << fmtArray(p1) << ", " << fmtArray(p2) << ")";
+    return oss.str();
+}
+
+// Distance in 2D for weights
+double distance2D(const Point &a, const Point &b) {
+    double dx=a.x-b.x; double dy=a.y-b.y;
+    return std::sqrt(dx*dx+dy*dy);
+}
+
+// Distance in 3D for heuristic
+double distance3D(const Point &a, const Point &b) {
+    double dx=a.x-b.x; double dy=a.y-b.y; double dz=a.z-b.z;
+    return std::sqrt(dx*dx+dy*dy+dz*dz);
+}
+
+// Use GEOS to check intersection
+bool segments_intersect_no_touches_geos(const Point &A, const Point &B, const Point &C, const Point &D) {
+    // Create line segment for AB
+    GEOSCoordSequence* seq1 = GEOSCoordSeq_create_r(geos_ctx, 2, 2);
+    GEOSCoordSeq_setXY_r(geos_ctx, seq1, 0, A.x, A.y);
+    GEOSCoordSeq_setXY_r(geos_ctx, seq1, 1, B.x, B.y);
+    GEOSGeometry* line1 = GEOSGeom_createLineString_r(geos_ctx, seq1);
+
+    // Create line segment for CD
+    GEOSCoordSequence* seq2 = GEOSCoordSeq_create_r(geos_ctx, 2, 2);
+    GEOSCoordSeq_setXY_r(geos_ctx, seq2, 0, C.x, C.y);
+    GEOSCoordSeq_setXY_r(geos_ctx, seq2, 1, D.x, D.y);
+    GEOSGeometry* line2 = GEOSGeom_createLineString_r(geos_ctx, seq2);
+
+    char intersects = GEOSIntersects_r(geos_ctx, line1, line2);
+    char touches = GEOSTouches_r(geos_ctx, line1, line2);
+
+    bool result = false;
+    if (intersects && !touches) {
+        result = true;
+    }
+
+    GEOSGeom_destroy_r(geos_ctx, line1);
+    GEOSGeom_destroy_r(geos_ctx, line2);
+
+    return result;
+}
+
+// Connect consecutive convex hull points.
+std::vector<std::pair<Point,Point>> add_outer_edges_cube() {
+    Point vs[num_rows];
+    for (int i=0;i<num_rows;i++) vs[i]=arrToPoint(cube_vertices[i]);
+    std::vector<std::pair<Point,Point>> edges;
+    for (int i=0; i<num_rows; i++) {
+        int j = (i + 1) % num_rows;
+        edges.push_back({vs[i], vs[j]});
+        double w = distance2D(vs[i], vs[j]);
+        add_edge(vs[i], vs[j], w);
+    }
+    return edges;
+}
+
+void add_edges_without_intersection(const Point &point, const std::vector<std::pair<Point,Point>> &cube_edges) {
+    Point vs[num_rows];
+    for (int i=0;i<num_rows;i++) vs[i]=arrToPoint(cube_vertices[i]);
+
+    for (int i=0;i<num_rows;i++) {
+        Point vertex = vs[i];
+        bool intersects = false;
+        for (auto &ce: cube_edges) {
+            if (segments_intersect_no_touches_geos(point, vertex, ce.first, ce.second)) {
+                //std::cout << "Edge from " << fmtPoint(point) << " to " << fmtPoint(vertex)
+                //          << " intersects with cube edge " << fmtEdgeAsArrays(ce.first, ce.second) << "\n";
+                intersects = true;
+                break;
+            }
+        }
+        if (!intersects) {
+            double w = distance2D(point, vertex);
+            add_edge(point, vertex, w);
+            //std::cout << "Added edge from " << fmtPoint(point) << " to " << fmtPoint(vertex) << "\n";
+        }
+    }
+}
+
+std::vector<Point> astar_path(const Point &start, const Point &goal) {
+    std::map<Point,double> gScore;
+    std::map<Point,double> fScore;
+    std::map<Point,Point> cameFrom;
+
+    for (auto &kv: graph) {
+        gScore[kv.first] = std::numeric_limits<double>::infinity();
+        fScore[kv.first] = std::numeric_limits<double>::infinity();
+    }
+
+    gScore[start] = 0.0;
+    fScore[start] = distance3D(start, goal);
+
+   
+    static long long counter = 0;
+
+    struct PQItem {
+        Point node;
+        double f;
+        long long order;
+        bool operator>(const PQItem &o) const {
+            if (f == o.f) return order > o.order;
+            return f > o.f;
+        }
+    };
+
+    std::priority_queue<PQItem, std::vector<PQItem>, std::greater<PQItem>> openSet;
+    openSet.push({start, fScore[start], counter++});
+    std::map<Point, bool> inOpen;
+    inOpen[start] = true;
+
+    while (!openSet.empty()) {
+        Point current = openSet.top().node;
+        openSet.pop();
+        inOpen[current] = false;
+
+        if (current == goal) {
+            std::vector<Point> path;
+            Point cur = current;
+            while (!(cur == start)) {
+                path.push_back(cur);
+                cur = cameFrom[cur];
+            }
+            path.push_back(start);
+            std::reverse(path.begin(), path.end());
+            return path;
+        }
+
+        for (auto &edge: graph[current]) {
+            Point neighbor = edge.node;
+            double tentative = gScore[current] + edge.weight;
+            if (tentative < gScore[neighbor]) {
+                cameFrom[neighbor] = current;
+                gScore[neighbor] = tentative;
+                fScore[neighbor] = tentative + distance3D(neighbor, goal);
+                if (!inOpen[neighbor]) {
+                    openSet.push({neighbor, fScore[neighbor], counter++});
+                    inOpen[neighbor] = true;
+                }
+            }
+        }
+    }
+
+    return {};
+}
+// -------------------------------------------------------------------------
 
