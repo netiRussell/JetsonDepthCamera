@@ -1,6 +1,8 @@
 ﻿// negative x => left; positive y => down.
 // image is flipped in x-axis
-// TODO: connect the generated convex hull to the shortest path finding component
+// TODO: make sure the path is updated
+// TODO: make sure the camera is capable of capturing objects when they are rights in front of it
+// TODO: lower filters for convex hulls
 
 #include <iostream>
 #include <depthai/depthai.hpp>
@@ -37,20 +39,6 @@ struct HullData {
 };
 
 // Shortest path finding component --------------------------------------------
-// Convex hull vertices
-static double cube_vertices[][3] = {
-    {0.0644393, 0.15343, 0.351},
-    {-0.00943387, 0.152119, 0.351},
-    {-0.00899675, 0.042429, 0.351},
-    {0.0618166, 0.0463621, 0.351}
-};
-// Get the size of the first dimension (number of rows)
-int num_rows = sizeof(cube_vertices) / sizeof(cube_vertices[0]);
-
-// Source and end points
-static double source[3] = {0, 0, 0};
-static double endp[3]   = {0, 0, 0.5}; // go 50cm forward
-
 struct Point {
     double x,y,z;
 };
@@ -76,12 +64,12 @@ std::map<Point, std::vector<Edge>> graph;
 GEOSContextHandle_t geos_ctx = nullptr;
 
 std::vector<Point> astar_path(const Point &start, const Point &goal);
-void add_edges_without_intersection(const Point &point, const std::vector<std::pair<Point,Point>> &cube_edges);
-std::vector<std::pair<Point,Point>> add_outer_edges_cube();
+void add_edges_without_intersection(const Point &point, const std::vector<std::pair<Point,Point>> &cube_edges, int num_rows, std::vector< std::array<double, 3> > cube_vertices);
+std::vector<std::pair<Point,Point>> add_outer_edges_cube(int num_rows, std::vector< std::array<double, 3> > cube_vertices);
 bool segments_intersect_no_touches_geos(const Point &A, const Point &B, const Point &C, const Point &D);
 double distance3D(const Point &a, const Point &b);
 double distance2D(const Point &a, const Point &b);
-Point arrToPoint(const double arr[3]);
+Point arrToPoint(const std::array<double, 3> arr);
 void add_node(const Point &p);
 void add_edge(const Point &u, const Point &v, double w);
 std::string fmtPoint(const Point &p);
@@ -188,6 +176,10 @@ int main() {
     const int minDepth = 2;
     const int maxDepth = 550;
 
+    // Source and end points
+    static std::array<double, 3> source = {0, 0, 0};
+    static std::array<double, 3> endp   = {0, 0, 0.5}; // go 50cm forward
+
     // Convex Hull & Shortest Path generation functionality
     const int num_captures = 50;
 
@@ -196,7 +188,10 @@ int main() {
     auto start_time = std::chrono::high_resolution_clock::now();
 
     // Compute the convex hull
-    std::vector< std::array<double, 3> > convexHull = generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, 0, 0, 0);
+    std::vector< std::array<double, 3> > cube_vertices = generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, 0, 0, 0);
+
+    // Get the size of the first dimension (number of rows)
+    int num_rows = sizeof(cube_vertices) / sizeof(cube_vertices[0]);
 
     // Initialize GEOS
     geos_ctx = GEOS_init_r();
@@ -212,15 +207,15 @@ int main() {
     add_node(e);
 
     // Add convex hull edges
-    auto cube_edges = add_outer_edges_cube();
+    auto cube_edges = add_outer_edges_cube(num_rows, cube_vertices);
 
     // Add edges from source
     //std::cout << "Adding edges from source:\n";
-    add_edges_without_intersection(s, cube_edges);
+    add_edges_without_intersection(s, cube_edges, num_rows, cube_vertices);
 
     // Add edges from end
     //std::cout << "\nAdding edges from end:\n";
-    add_edges_without_intersection(e, cube_edges);
+    add_edges_without_intersection(e, cube_edges, num_rows, cube_vertices);
 
     // A* search
     std::vector<Point> path = astar_path(s, e);
@@ -251,10 +246,13 @@ int main() {
         // Record the start time
         start_time = std::chrono::high_resolution_clock::now();
 
+	// Empty the graph
+	graph.clear();
+
         if( answr == 1 ){
 
             // Compute the convex hull
-            convexHull = generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, 0, 0, 0);
+            cube_vertices = generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, 0, 0, 0);
 
         } else if( answr == 2 ){
             float newX, newY, newZ;
@@ -266,10 +264,14 @@ int main() {
             std::cin >> newZ;
 
             // Compute the convex hull
-            convexHull = generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, newX, newY, newZ);
+            cube_vertices = generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, newX, newY, newZ);
         } else{
             break;
         }
+
+	
+	// Get the size of the first dimension (number of rows)
+    	num_rows = cube_vertices.size();
 
         // Initialize GEOS
         geos_ctx = GEOS_init_r();
@@ -285,15 +287,15 @@ int main() {
         add_node(e);
 
         // Add convex hull edges
-        cube_edges = add_outer_edges_cube();
+        cube_edges = add_outer_edges_cube(num_rows, cube_vertices);
 
         // Add edges from source
         //std::cout << "Adding edges from source:\n";
-        add_edges_without_intersection(s, cube_edges);
+        add_edges_without_intersection(s, cube_edges, num_rows, cube_vertices);
 
         // Add edges from end
         //std::cout << "\nAdding edges from end:\n";
-        add_edges_without_intersection(e, cube_edges);
+        add_edges_without_intersection(e, cube_edges, num_rows, cube_vertices);
 
         // A* search
         path = astar_path(s, e);
@@ -456,7 +458,7 @@ std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, 
             for (int j = 0; j < netHulls.size(); j++) {
 
                 // Make sure the hull is recognized
-                if( netHulls[j].isRealObject < 3 ){
+                if( netHulls[j].isRealObject < 1 ){
                         continue;
                 }
 
@@ -493,8 +495,15 @@ std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, 
                 std::cout << minDepths[k] << std::endl; 
             }
 		    std::cout << "Avg: " << std::reduce(minDepths.begin(), minDepths.end()) / minDepths.size() << std::endl;
-            
-	        finalOutput = analyzeCaptures(points, findMedian(minDepths, minDepths.size()), displayImage, fx, fy, cx, cy, newX, newY, newZ);
+            	
+		double depth = 0;
+		if(minDepths.size() != 0){
+			depth = findMedian(minDepths, minDepths.size());
+		} else {
+			std::cout << "[ERROR] There are no convex hulls found";
+			return {}; // Return an empty vector
+		}
+	        finalOutput = analyzeCaptures(points, depth, displayImage, fx, fy, cx, cy, newX, newY, newZ);
         }
 
         counter++;
@@ -718,8 +727,12 @@ double findMedian( std::vector<double> v, int n ){
 
 
 // Shortest path finding components --------------------------------------------
-Point arrToPoint(const double arr[3]) {
-    Point p; p.x=arr[0]; p.y=arr[1]; p.z=arr[2]; return p;
+Point arrToPoint(const std::array<double, 3> arr) {
+    Point p; 
+    p.x=arr[0]; 
+    p.y=arr[1]; 
+    p.z=arr[2]; 
+    return p;
 }
 
 void add_node(const Point &p) {
@@ -792,7 +805,7 @@ bool segments_intersect_no_touches_geos(const Point &A, const Point &B, const Po
 }
 
 // Connect consecutive convex hull points.
-std::vector<std::pair<Point,Point>> add_outer_edges_cube() {
+std::vector<std::pair<Point,Point>> add_outer_edges_cube(int num_rows, std::vector< std::array<double, 3> > cube_vertices) {
     Point vs[num_rows];
     for (int i=0;i<num_rows;i++) vs[i]=arrToPoint(cube_vertices[i]);
     std::vector<std::pair<Point,Point>> edges;
@@ -805,7 +818,7 @@ std::vector<std::pair<Point,Point>> add_outer_edges_cube() {
     return edges;
 }
 
-void add_edges_without_intersection(const Point &point, const std::vector<std::pair<Point,Point>> &cube_edges) {
+void add_edges_without_intersection(const Point &point, const std::vector<std::pair<Point,Point>> &cube_edges, int num_rows, std::vector< std::array<double, 3> > cube_vertices) {
     Point vs[num_rows];
     for (int i=0;i<num_rows;i++) vs[i]=arrToPoint(cube_vertices[i]);
 
