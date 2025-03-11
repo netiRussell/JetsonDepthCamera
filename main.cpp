@@ -27,15 +27,12 @@ void projectPoints(const std::vector< std::array<float, 7> >& hull, std::vector<
 void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, double minDepth, bool final );
 std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, std::shared_ptr<dai::DataOutputQueue> depthQueue, float fx, float fy, float cx, float cy, float depthUnit, float newX, float newY, float newZ);
 void arrayToPoint2f(std::vector< std::array<float, 3> >& gatheredPoints, std::vector<cv::Point2f>& gathered2fPoints);
-float findMatchingValues( const cv::Point2f& points, const std::vector<std::array<float, 3>>& arrayData );
+float findMatchingValues(const cv::Point2f& pt, const std::vector<std::array<float, 3>>& arrayData, float tolerance = 1.0f);
 double findMedian( std::vector<double> v, int n );
 
 struct HullData {
     std::vector<cv::Point> hull;
-    int isRealObject;
-    double area;
     double minDepth;
-    std::pair<double, double> coordinates;
 };
 
 // Shortest path finding component --------------------------------------------
@@ -128,17 +125,16 @@ int main() {
             std::cout << "[WARNING] no corresponding depth unit has been found." << std::endl;
     }
 
-    /* Filters - can be used to improve the final output
-    auto config = stereo->initialConfig.get();
-    config.postProcessing.speckleFilter.enable = false;
+	/*
+    config.postProcessing.speckleFilter.enable = true; // If noise is nott too much - turn off
     config.postProcessing.speckleFilter.speckleRange = 60;
     config.postProcessing.temporalFilter.enable = true;
     config.postProcessing.spatialFilter.enable = true;
     config.postProcessing.spatialFilter.holeFillingRadius = 2;
     config.postProcessing.spatialFilter.numIterations = 1;
-    config.postProcessing.decimationFilter.decimationFactor = 1; // TODO: delete for the sake of perfomance
+    config.postProcessing.decimationFilter.decimationFactor = 1; // turn off for the sake of perfomance
     stereo->initialConfig.set(config);
-    */
+*/
 
     // Linking
     monoLeft->out.link(stereo->left);
@@ -173,15 +169,16 @@ int main() {
     //std::cout << "cx = " << cx << " cy = " << cy << std::endl;
 
     // Depth thresholds in millimeters (1000mm = 1m)
-    const int minDepth = 2;
+    const int minDepth = 100;
     const int maxDepth = 550;
 
     // Source and end points
     static std::array<double, 3> source = {0, 0, 0};
-    static std::array<double, 3> endp   = {0, 0, 0.5}; // go 50cm forward
+    static std::array<double, 3> endp   = {0, 0, 1}; // go 100cm forward
 
     // Convex Hull & Shortest Path generation functionality
-    const int num_captures = 50;
+    const int num_captures = 30;
+    const int volume_increace_cm = 32;
 
     // -- First launch --
     // Record the start time
@@ -253,6 +250,7 @@ int main() {
 
             // Compute the convex hull
             cube_vertices = generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, 0, 0, 0);
+	    
 
         } else if( answr == 2 ){
             float newX, newY, newZ;
@@ -344,7 +342,7 @@ std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, 
         cv::Mat mask;
         cv::inRange(depthImage, minDepth, maxDepth, mask);
 
-        // Check if the mask is empty (i.e., all pixels are 0)
+	// Check if the mask is empty (i.e., all pixels are 0)
         if(cv::countNonZero(mask) == 0) {
             std::cout << "[WARNING] No pixels are found in the [" 
                 << minDepth << ", " << maxDepth 
@@ -355,6 +353,12 @@ std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, 
         // Find the minimal depth within the depthImage with the threshold mask
         double minDepthOfObj;
         cv::minMaxLoc(depthImage, &minDepthOfObj, nullptr, nullptr, nullptr, mask);
+
+        // Filter the mask
+        cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
+        cv::dilate(mask, mask, kernel);
+        cv::erode(mask, mask, kernel);
+        cv::GaussianBlur(mask, mask, cv::Size(5, 5), 0);
 
         // Find contours in the mask
         std::vector<std::vector<cv::Point>> contours;
@@ -376,29 +380,15 @@ std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, 
         // Filter out noise
         for (size_t i = 0; i < hulls.size(); i++) {
 
-            std::vector< std::array<float, 7> > points; // Points of a single convex hull
-
-            // Compute area in pixels and skip if the captured hull is just a noise
+            // Skip if the captured hull is just a noise
             if(hulls[i].empty()){
                 continue;
             }
 
-            double area = cv::contourArea(hulls[i]);
-            if( area < 100 ){
-                continue;
-            }
-
-
             // Initialize the hull for further analysis
             HullData newHullData;
             newHullData.hull = hulls[i];          // Assign the vector of points
-            newHullData.isRealObject = 0;     // Set the flag
-            newHullData.area = area;        	  // Set the area
             newHullData.minDepth = minDepthOfObj; // Set the minimal depth
-
-            // Calculate the the center of the current hull
-            cv::Moments mu = cv::moments(hulls[i]);
-            newHullData.coordinates = std::make_pair(mu.m10 / mu.m00, mu.m01 / mu.m00); // x, y
 
             netHulls.push_back(newHullData);
 
@@ -413,8 +403,8 @@ std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, 
             cv::applyColorMap(displayImage, displayImage, cv::COLORMAP_HOT);
 
             // TODO: change bg color based on minDepth
-                // displayImage.setTo( cv::Scalar(0, 0, 139) );
-	        cv::imshow("Only the object", displayImage);
+            // displayImage.setTo( cv::Scalar(0, 0, 139) );
+	    cv::imshow("Only the object", displayImage);
 
 
             // Draw convex hulls on the image
@@ -425,42 +415,11 @@ std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, 
 	        // Display image
             cv::imshow("Convex Hulls", displayImage);
 
-            // Check if the hull represents a real object
-            for (size_t j = 0; j < netHulls.size(); j++) {
-
-                // Check on other hulls
-                // std::cout << "Current Area = " << netHulls[j].area << std::endl;
-                for (size_t k = j+1; k < netHulls.size(); k++) {
-
-                    // Make sure the hull hasn't been recognized yet
-                    if( netHulls[k].isRealObject >= 3 ){
-                            continue;
-                    }
-
-                    // Make sure the area and the coordinates are similar
-                    if( fabs(netHulls[j].area - netHulls[k].area) <= 100 && (fabs(netHulls[j].coordinates.first - netHulls[k].coordinates.first) <= 0.5 && fabs(netHulls[j].coordinates.second - netHulls[k].coordinates.second) <= 0.5) ){
-                        netHulls[j].isRealObject++;
-                        netHulls[k].isRealObject++;
-
-                        // std::cout << "\t Considered Area = " << netHulls[k].area << std::endl;
-                        // std::cout << "Hull " << j << ": Centroid = (" << netHulls[j].coordinates.first << ", " << netHulls[j].coordinates.second << ")" << std::endl;
-                    }
-
-                }
-
-            }
-
-
             // ! TODO: change the structure to have all of the coordinates in a single capture
             // Filter out coordinates for visualization
             std::vector< std::array<float, 3> > points;
 
             for (int j = 0; j < netHulls.size(); j++) {
-
-                // Make sure the hull is recognized
-                if( netHulls[j].isRealObject < 1 ){
-                        continue;
-                }
 
                 minDepths.push_back(netHulls[j].minDepth);
 
@@ -490,11 +449,7 @@ std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, 
 
             }
 
-            // TODO: debug and delete
-            for( int k = 0; k < minDepths.size(); k++ ){
-                std::cout << minDepths[k] << std::endl; 
-            }
-		    std::cout << "Avg: " << std::reduce(minDepths.begin(), minDepths.end()) / minDepths.size() << std::endl;
+		std::cout << "Avg: " << std::reduce(minDepths.begin(), minDepths.end()) / minDepths.size() << std::endl;
             	
 		double depth = 0;
 		if(minDepths.size() != 0){
@@ -561,7 +516,8 @@ std::vector< std::array<double, 3> > analyzeCaptures( std::vector< std::array<fl
     // Approximate the convex hull to get less vetices => better perfomance
     double arc_length = cv::arcLength(finalHull, true);
     std::vector<cv::Point2f> approxHull;
-    cv::approxPolyDP(finalHull, approxHull, 0.01*arc_length, true); // epsilon 1% to 5% of the arc length
+    double epsilon = 0.005 * arc_length; // can be played with to find the golden middle
+    cv::approxPolyDP(finalHull, approxHull, epsilon, true);
 
     // Project the 2D points back to 3D
     std::vector<cv::Point2f> approxCoordinates(approxHull.size());
@@ -647,19 +603,15 @@ void arrayToPoint2f(std::vector< std::array<float, 3> >& gatheredPoints, std::ve
 
 
 /// Temprorary way to find the corresponding Z values
-float findMatchingValues( const cv::Point2f& points, const std::vector<std::array<float, 3>>& arrayData ) {
-        // For each point, search exhaustively in arrayData
-        for (const auto& arr : arrayData) {
-            	// Compare x and y
-            	if (points.x == arr[0] && points.y == arr[1]) {
-                	// If there's a match, return the value
-                	return arr[2];
-		}
-	}
-
-    	// No match case
-    	return -1;
+float findMatchingValues(const cv::Point2f& pt, const std::vector<std::array<float, 3>>& arrayData, float tolerance) {
+    for (const auto& arr : arrayData) {
+        if (std::abs(pt.x - arr[0]) < tolerance && std::abs(pt.y - arr[1]) < tolerance) {
+            return arr[2];
+        }
+    }
+    return -1;
 }
+
 
 
 /// Graphing the points on the 2D image
