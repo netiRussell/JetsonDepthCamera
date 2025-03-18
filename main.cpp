@@ -1,8 +1,11 @@
 ﻿// negative x => left; positive y => down.
 // image is flipped in x-axis
-// TODO: make sure the path is updated
-// TODO: make sure the camera is capable of capturing objects when they are rights in front of it
-// TODO: lower filters for convex hulls
+// TODO: make sure step #1 works
+// TODO: makse sure step #2 works
+// TODO: make sure the entire logic works
+// TODO: conduct two tests and record data
+// TODO: visualize the data
+// TODO: Perhaps finalOutput must be based off the universal points, not the relative ones
 
 #include <iostream>
 #include <depthai/depthai.hpp>
@@ -22,13 +25,14 @@
 #include <chrono>
 
 ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
-std::vector< std::array<double, 3> > analyzeCaptures( std::vector< std::array<float, 3> >& gatheredPoints, double minDepth, cv::Mat displayImage, float fx, float fy, float cx, float cy, float newX, float newY, float newZ);
+std::vector< std::array<double, 3> > analyzeCaptures( std::vector< std::array<float, 3> >& gatheredPoints, double minDepth, cv::Mat displayImage, float fx, float fy, float cx, float cy, float newX, float newY, float newZ, float volume_increase_m);
 void projectPoints(const std::vector< std::array<float, 7> >& hull, std::vector<cv::Point2f>& projectedPoints);
 void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, double minDepth, bool final );
-std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, std::shared_ptr<dai::DataOutputQueue> depthQueue, float fx, float fy, float cx, float cy, float depthUnit, float newX, float newY, float newZ);
+std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, std::shared_ptr<dai::DataOutputQueue> depthQueue, float fx, float fy, float cx, float cy, float depthUnit, float newX, float newY, float newZ, float volume_increase_m);
 void arrayToPoint2f(std::vector< std::array<float, 3> >& gatheredPoints, std::vector<cv::Point2f>& gathered2fPoints);
 float findMatchingValues(const cv::Point2f& pt, const std::vector<std::array<float, 3>>& arrayData, float tolerance = 1.0f);
 double findMedian( std::vector<double> v, int n );
+void expandFrontSides(std::vector< std::array<double, 3> >& points, float volume_increase_m, float newZ);
 
 struct HullData {
     std::vector<cv::Point> hull;
@@ -134,7 +138,7 @@ int main() {
     config.postProcessing.spatialFilter.numIterations = 1;
     config.postProcessing.decimationFilter.decimationFactor = 1; // turn off for the sake of perfomance
     stereo->initialConfig.set(config);
-*/
+	*/
 
     // Linking
     monoLeft->out.link(stereo->left);
@@ -170,22 +174,22 @@ int main() {
 
     // Depth thresholds in millimeters (1000mm = 1m)
     const int minDepth = 100;
-    const int maxDepth = 550;
+    const int maxDepth = 750;
 
     // Source and end points
     static std::array<double, 3> source = {0, 0, 0};
     static std::array<double, 3> endp   = {0, 0, 1}; // go 100cm forward
 
     // Convex Hull & Shortest Path generation functionality
-    const int num_captures = 30;
-    const int volume_increace_cm = 32;
+    const int num_captures = 20;
+    const float volume_increase_m = 0.05;
 
     // -- First launch --
     // Record the start time
     auto start_time = std::chrono::high_resolution_clock::now();
 
     // Compute the convex hull
-    std::vector< std::array<double, 3> > cube_vertices = generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, 0, 0, 0);
+    std::vector< std::array<double, 3> > cube_vertices = generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, 0, 0, 0, volume_increase_m);
 
     // Get the size of the first dimension (number of rows)
     int num_rows = sizeof(cube_vertices) / sizeof(cube_vertices[0]);
@@ -243,13 +247,13 @@ int main() {
         // Record the start time
         start_time = std::chrono::high_resolution_clock::now();
 
-	// Empty the graph
-	graph.clear();
+        // Empty the graph
+        graph.clear();
 
         if( answr == 1 ){
 
             // Compute the convex hull
-            cube_vertices = generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, 0, 0, 0);
+            cube_vertices = generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, 0, 0, 0, volume_increase_m);
 	    
 
         } else if( answr == 2 ){
@@ -261,8 +265,11 @@ int main() {
             std::cout << "The Z of the new position = ";
             std::cin >> newZ;
 
+	    // Update the source for the next position
+            source = {newX, newY, newZ};
+
             // Compute the convex hull
-            cube_vertices = generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, newX, newY, newZ);
+            cube_vertices = generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, newX, newY, newZ, volume_increase_m);
         } else{
             break;
         }
@@ -319,7 +326,7 @@ int main() {
     return 0;
 }
 
-std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, std::shared_ptr<dai::DataOutputQueue> depthQueue, float fx, float fy, float cx, float cy, float depthUnit, float newX, float newY, float newZ){
+std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, std::shared_ptr<dai::DataOutputQueue> depthQueue, float fx, float fy, float cx, float cy, float depthUnit, float newX, float newY, float newZ, float volume_increase_m){
     int counter = 1;
     int nCaptPerAnalysis = num_captures;
     std::vector<HullData> netHulls;
@@ -336,7 +343,7 @@ std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, 
         cv::Mat depthImage8U;
         cv::normalize(depthImage, depthImage8U, 0, 255, cv::NORM_MINMAX, CV_8U);
         cv::applyColorMap(depthImage8U, depthImage8U, cv::COLORMAP_HOT);
-        cv::imshow("Last Capture", depthImage8U); 
+        //cv::imshow("Last Capture", depthImage8U); 
 
         // Threshold depth image to create mask
         cv::Mat mask;
@@ -350,32 +357,37 @@ std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, 
             continue; // Skip this iteration, since there's no object in range
         }
 
-        // Find the minimal depth within the depthImage with the threshold mask
-        double minDepthOfObj;
-        cv::minMaxLoc(depthImage, &minDepthOfObj, nullptr, nullptr, nullptr, mask);
-
-        // Filter the mask
-        cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
+	// Filter the mask
+        cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
         cv::dilate(mask, mask, kernel);
         cv::erode(mask, mask, kernel);
-        cv::GaussianBlur(mask, mask, cv::Size(5, 5), 0);
 
+	// If the raw depth is 0, we do not want to include that pixel:
+	cv::Mat zeroDepthMask = (depthImage == 0);  // 8U mask of pixels that are 0 in depth
+	mask.setTo(0, zeroDepthMask);   
+     
         // Find contours in the mask
         std::vector<std::vector<cv::Point>> contours;
         cv::findContours(mask, contours, cv::RETR_TREE, cv::CHAIN_APPROX_SIMPLE);
 
-
         // Compute convex hulls for each contour
         std::vector<std::vector<cv::Point>> hulls;
+	double minAreaThreshold = 500.0;
         for (size_t i = 0; i < contours.size(); i++) {
-            if(contours[i].size() < 3) {
-                // Not enough points for hull; skip this contour.
+	    double area = cv::contourArea(contours[i]);
+            if(contours[i].size() < 3 || area < minAreaThreshold) {
+                // Not enough points for hull or it is too small; skip this contour.
+		cv::drawContours(mask, std::vector<std::vector<cv::Point>>{contours[i]}, -1, cv::Scalar(0), cv::FILLED);
                 continue;
             }
             std::vector<cv::Point> hull;
             cv::convexHull(contours[i], hull);
             hulls.push_back(hull);
         }
+
+	// Find the minimal depth within the depthImage with the threshold mask
+	double minDepthOfObj;	
+        cv::minMaxLoc(depthImage, &minDepthOfObj, nullptr, nullptr, nullptr, mask);
 
         // Filter out noise
         for (size_t i = 0; i < hulls.size(); i++) {
@@ -404,7 +416,7 @@ std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, 
 
             // TODO: change bg color based on minDepth
             // displayImage.setTo( cv::Scalar(0, 0, 139) );
-	    cv::imshow("Only the object", displayImage);
+	    // cv::imshow("Only the object", displayImage);
 
 
             // Draw convex hulls on the image
@@ -413,7 +425,7 @@ std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, 
             }
 
 	        // Display image
-            cv::imshow("Convex Hulls", displayImage);
+            //cv::imshow("Convex Hulls", displayImage);
 
             // ! TODO: change the structure to have all of the coordinates in a single capture
             // Filter out coordinates for visualization
@@ -458,7 +470,8 @@ std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, 
 			std::cout << "[ERROR] There are no convex hulls found";
 			return {}; // Return an empty vector
 		}
-	        finalOutput = analyzeCaptures(points, depth, displayImage, fx, fy, cx, cy, newX, newY, newZ);
+
+	        finalOutput = analyzeCaptures(points, depth, displayImage, fx, fy, cx, cy, newX, newY, newZ, volume_increase_m);
         }
 
         counter++;
@@ -498,7 +511,7 @@ ushort interpolateDepth(const cv::Mat& depthImage, int x, int y) {
 }
 
 /// Generating a final convex hull with as little vertices as possible from the gathered points
-std::vector< std::array<double, 3> > analyzeCaptures( std::vector< std::array<float, 3> >& gatheredPoints, double minDepth, cv::Mat displayImage, float fx, float fy, float cx, float cy, float newX, float newY, float newZ){
+std::vector< std::array<double, 3> > analyzeCaptures( std::vector< std::array<float, 3> >& gatheredPoints, double minDepth, cv::Mat displayImage, float fx, float fy, float cx, float cy, float newX, float newY, float newZ, float volume_increase_m){
 
     minDepth /= 1000; // Convert mm to meters
     
@@ -507,7 +520,7 @@ std::vector< std::array<double, 3> > analyzeCaptures( std::vector< std::array<fl
     arrayToPoint2f(gatheredPoints, gathered2fPoints);
 
     // Graph all the points 
-    graphPoints(gathered2fPoints, displayImage, minDepth, false);
+    //graphPoints(gathered2fPoints, displayImage, minDepth, false);
 
     // Compute the convex hull of the projected points and store vertices
     std::vector<cv::Point2f> finalHull;
@@ -533,7 +546,8 @@ std::vector< std::array<double, 3> > analyzeCaptures( std::vector< std::array<fl
     }    
 
     // Graph the final convex hull 
-    graphPoints(approxHull, displayImage, minDepth, true);
+    //graphPoints(approxHull, displayImage, minDepth, true);
+    // TODO: use this one for debug
 
 
     // -- Additional graph but special case -----------------------------------
@@ -562,33 +576,20 @@ std::vector< std::array<double, 3> > analyzeCaptures( std::vector< std::array<fl
         // Add the points to the final output holder:
         x = x + newX;
         y = -(y + newY);
-        float z = minDepth + newZ;
-        finalOutput.push_back({x, y, z});
+        finalOutput.push_back({x, y, minDepth});
 
-        std::cout << "\t\tUniversal Point: X=" << x + newX  << "m, Y=" << -(y + newY)  << "m, Z=" << minDepth + newZ << "m" << std::endl;
+        std::cout << "\t\tUniversal Point: X=" << x << "m, Y=" << y << "m, Z=" << minDepth + newZ << "m" << std::endl;
         
-        /* Calculated from detphImage
-        //TODO: exhaustive, to be changed:
-	    float Z = findMatchingValues(pt2D, gatheredPoints);
-	    if( Z == -1 ){
-		    std::cout << "[WARNING]: no Z corresponding found, skipping these x,y." << std::endl;
-	    }
-
-        x = (pt2D.x - cx) * Z / fx;
-    	y = (pt2D.y - cy) * Z / fy;
-        cv::circle(image, cv::Point2f (x, y), radius, cv::Scalar (0, 0, 255), -1);  // -1 fills the circle
-        cv::putText(image, "X= " + std::to_string(x) + "m, Y= " + std::to_string(y) + "m, Z=" + std::to_string(Z), cv::Point2f (x, y), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 1 );
-
-        std::cout << "\t\tReal Point: X=" << x << "m, Y=" << y << "m, Z=" << Z << "m" << "\n" << std::endl;
-        */
     }
     
 
     // Display the result
-    cv::imshow("Just the final points", image);
+    //cv::imshow("Just the final points", image);
     cv::waitKey(0);
 
     std::cout << std::endl;
+
+    expandFrontSides(finalOutput, volume_increase_m, newZ);
 
     return finalOutput;
 }
@@ -675,6 +676,62 @@ double findMedian( std::vector<double> v, int n ){
     // of the two middle elements
     return (double)(v[(n - 1) / 2] + v[n / 2]) / 2.0;
 }
+
+
+// Expands the bounding box of the front-facing points in X and Y by 'volume_increase_m'.
+void expandFrontSides(std::vector< std::array<double, 3> >& points, float volume_increase_m, float newZ) {
+    // Step 1: Identify bounding box in x,y for points in front of camera
+    float minX =  std::numeric_limits<float>::max();
+    float maxX = -std::numeric_limits<float>::max();
+    float minY =  std::numeric_limits<float>::max();
+    float maxY = -std::numeric_limits<float>::max();
+
+    // Only consider points with z > 0
+    for (const auto& p : points) {
+        if (p[0] < minX) minX = p[0];
+        if (p[0] > maxX) maxX = p[0];
+        if (p[1] < minY) minY = p[1];
+        if (p[1] > maxY) maxY = p[1];
+    }
+
+    // If failed to get a proper bounding box, do nothing
+    if (minX > maxX || minY > maxY) {
+        std::cout << "[ERROR] Failed to get a proper bounding box for expansion of the obstacle." << std::endl;
+        return;
+    }
+
+    float widthX = maxX - minX;  // original X width
+    float widthY = maxY - minY;  // original Y width
+    if (widthX <= 0.0f || widthY <= 0.0f) {
+        // Degenerate case: no real area to expand
+        std::cout << "[ERROR] Area of the obstacle is 0. Failed to get a proper bounding box for expansion of the obstacle." << std::endl;
+        return;
+    }
+
+    // Step 2: Compute the new (expanded) bounding box widths
+    float newWidthX = widthX + volume_increase_m;
+    float newWidthY = widthY + volume_increase_m;
+
+    // Step 3: Compute how much to scale X and Y around the center
+    float scaleX = newWidthX / widthX;
+    float scaleY = newWidthY / widthY;
+
+    float centerX = 0.5f * (minX + maxX);
+    float centerY = 0.5f * (minY + maxY);
+
+    // Step 4: Scale each front-facing point around (centerX, centerY).
+    for (auto& p : points) {
+        p[0] = centerX + (p[0] - centerX) * scaleX; // x
+        p[1] = centerY + (p[1] - centerY) * scaleY; // y
+        
+	p[2] = p[2] > 0.32 ? p[2] - 0.32 : 0; // z
+	p[2] += newZ;
+
+	std::cout << "current: " << p[2] << "\n";
+	std::cout << "newz: " << newZ << "\n\n";
+    }
+}
+
 
 
 
