@@ -532,25 +532,10 @@ std::vector< std::array<double, 3> > analyzeCaptures( std::vector< std::array<fl
     double epsilon = 0.005 * arc_length; // can be played with to find the golden middle
     cv::approxPolyDP(finalHull, approxHull, epsilon, true);
 
-    // Project the 2D points back to 3D
-    std::vector<cv::Point2f> approxCoordinates(approxHull.size());
-    for (int i = 0; i < approxHull.size(); i++){
-	    //TODO: exhaustive, to be changed:
-	    float Z = findMatchingValues(approxHull[i], gatheredPoints);
-	    if( Z == -1 ){
-		    std::cout << "[WARNING]: no Z corresponding found, skipping these x,y." << std::endl;
-	    }
-
-        approxCoordinates[i].x = (approxHull[i].x - cx) * minDepth / fx;
-        approxCoordinates[i].y = (approxHull[i].y - cy) * minDepth / fy;
-    }    
-
     // Graph the final convex hull 
-    //graphPoints(approxHull, displayImage, minDepth, true);
-    // TODO: use this one for debug
+    graphPoints(approxHull, displayImage, minDepth, true);
 
-
-    // -- Additional graph but special case -----------------------------------
+    // -- Just the final points graph -----------------------------------
     // Set up the display window and projection parameters
     int width = 1280, height = 720;
     cv::Mat image = cv::Mat::zeros(height, width, CV_8UC3);
@@ -564,32 +549,49 @@ std::vector< std::array<double, 3> > analyzeCaptures( std::vector< std::array<fl
     std::cout << "--------------------------------------------------------------------------\n\n\n\nApprox Coordinates:" << std::endl;
     std::vector< std::array<double, 3> > finalOutput;
     for (const cv::Point2f& pt2D : approxHull) {
+
+        //TODO: exhaustive, to be changed:
+        float Z = findMatchingValues(pt2D, gatheredPoints);
+        if( Z == -1 ){
+            std::cout << "[WARNING]: no Z corresponding found, skipping these x,y." << std::endl;
+        }
+
         
         // Draw the point on the image
         cv::circle(image, pt2D, radius, color, -1);  // -1 fills the circle
-	    float x = (pt2D.x - cx) * minDepth / fx;
-    	float y = (pt2D.y - cy) * minDepth / fy;
-        cv::putText(image, "X= " + std::to_string(x) + "m, Y= " + std::to_string(-y) + "m, Z=" + std::to_string(minDepth), pt2D, cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 1 );
 
-        std::cout << "\tRelative Point: X=" << x  << "m, Y=" << -y  << "m, Z=" << minDepth << "m" << std::endl;
+        // Project the 2D points back to 3D
+	    float x = (pt2D.x - cx) * Z / fx;
+    	float y = (pt2D.y - cy) * Z / fy;
+
+        // Text to display the coordinates
+        cv::putText(image, "X= " + std::to_string(x) + "m, Y= " + std::to_string(-y) + "m, Z=" + std::to_string(Z), pt2D, cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 1 );
+
+        std::cout << "\tRelative Point: X=" << x  << "m, Y=" << -y  << "m, Z=" << Z << "m" << std::endl;
 
         // Add the points to the final output holder:
         x = x + newX;
         y = -(y + newY);
-        finalOutput.push_back({x, y, minDepth});
+        finalOutput.push_back({x, y, Z});
 
-        std::cout << "\t\tUniversal Point: X=" << x << "m, Y=" << y << "m, Z=" << minDepth + newZ << "m" << std::endl;
+        std::cout << "\t\tUniversal Point: X=" << x << "m, Y=" << y << "m, Z=" << Z + newZ << "m" << std::endl;
         
     }
     
 
     // Display the result
-    //cv::imshow("Just the final points", image);
+    cv::imshow("Just the final points", image);
     cv::waitKey(0);
 
     std::cout << std::endl;
 
-    expandFrontSides(finalOutput, volume_increase_m, newZ);
+    /*
+    - Find normal(position of camera vs position of node with the smallest Z)
+    - We find plane based on that point and normal
+    - Find intersection of the plane with every other point to create boundaries (vertices) of the final convex hull
+    */
+
+    // expandFrontSides(finalOutput, volume_increase_m, newZ);
 
     return finalOutput;
 }
