@@ -1,11 +1,6 @@
 ﻿// negative x => left; positive y => down.
 // image is flipped in x-axis
-// TODO: make sure step #1 works
-// TODO: makse sure step #2 works
-// TODO: make sure the entire logic works
-// TODO: conduct two tests and record data
-// TODO: visualize the data
-// TODO: Perhaps finalOutput must be based off the universal points, not the relative ones
+
 
 #include <iostream>
 #include <depthai/depthai.hpp>
@@ -21,62 +16,25 @@
 #include <algorithm>
 #include <string>
 #include <sstream>
-#include <geos_c.h>
 #include <chrono>
 
-ushort interpolateDepth(const cv::Mat& depthImage, int x, int y);
-std::vector< std::array<double, 3> > analyzeCaptures( std::vector< std::array<float, 3> >& gatheredPoints, double minDepth, cv::Mat displayImage, float fx, float fy, float cx, float cy, float newX, float newY, float newZ, float volume_increase_m);
-void projectPoints(const std::vector< std::array<float, 7> >& hull, std::vector<cv::Point2f>& projectedPoints);
-void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, double minDepth, bool final );
-std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, std::shared_ptr<dai::DataOutputQueue> depthQueue, float fx, float fy, float cx, float cy, float depthUnit, float newX, float newY, float newZ, float volume_increase_m);
-void arrayToPoint2f(std::vector< std::array<float, 3> >& gatheredPoints, std::vector<cv::Point2f>& gathered2fPoints);
-float findMatchingValues(const cv::Point2f& pt, const std::vector<std::array<float, 3>>& arrayData, float tolerance = 1.0f);
-double findMedian( std::vector<double> v, int n );
-void expandFrontSides(std::vector< std::array<double, 3> >& points, float volume_increase_m, float newZ);
-
-struct HullData {
-    std::vector<cv::Point> hull;
-    double minDepth;
-};
-
-// Shortest path finding component --------------------------------------------
-struct Point {
-    double x,y,z;
-};
-
-inline bool operator<(const Point &a, const Point &b) {
-    if (a.x != b.x) return a.x < b.x;
-    if (a.y != b.y) return a.y < b.y;
-    return a.z < b.z;
-}
-
-inline bool operator==(const Point &a, const Point &b) {
-    return (a.x == b.x && a.y == b.y && a.z == b.z);
-}
-
-struct Edge {
-    Point node;
-    double weight;
-};
+#include "shortestPathAlg.h"
+#include "misc.h"
 
 std::map<Point, std::vector<Edge>> graph;
 
 // Create a global GEOS context
 GEOSContextHandle_t geos_ctx = nullptr;
 
-std::vector<Point> astar_path(const Point &start, const Point &goal);
-void add_edges_without_intersection(const Point &point, const std::vector<std::pair<Point,Point>> &cube_edges, int num_rows, std::vector< std::array<double, 3> > cube_vertices);
-std::vector<std::pair<Point,Point>> add_outer_edges_cube(int num_rows, std::vector< std::array<double, 3> > cube_vertices);
-bool segments_intersect_no_touches_geos(const Point &A, const Point &B, const Point &C, const Point &D);
-double distance3D(const Point &a, const Point &b);
-double distance2D(const Point &a, const Point &b);
-Point arrToPoint(const std::array<double, 3> arr);
-void add_node(const Point &p);
-void add_edge(const Point &u, const Point &v, double w);
-std::string fmtPoint(const Point &p);
-std::string fmtArray(const Point &p);
-std::string fmtEdgeAsArrays(const Point &p1, const Point &p2);
-// -------------------------------------------------------------------------
+
+std::vector< std::array<double, 3> > analyzeCaptures( std::vector< std::array<float, 3> >& gatheredPoints, double minDepth, cv::Mat displayImage, float fx, float fy, float cx, float cy, float newX, float newY, float newZ, float volume_increase_m);
+
+std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, std::shared_ptr<dai::DataOutputQueue> depthQueue, float fx, float fy, float cx, float cy, float depthUnit, float newX, float newY, float newZ, float volume_increase_m);
+
+struct HullData {
+    std::vector<cv::Point> hull;
+    double minDepth;
+};
 
 
 int main() {
@@ -203,23 +161,23 @@ int main() {
     Point e = arrToPoint(endp);
 
     // Add convex hull vertices as nodes
-    for (int i=0;i<num_rows;i++) add_node(vs[i]);
-    add_node(s);
-    add_node(e);
+    for (int i=0;i<num_rows;i++) add_node(vs[i], graph);
+    add_node(s, graph);
+    add_node(e, graph);
 
     // Add convex hull edges
-    auto cube_edges = add_outer_edges_cube(num_rows, cube_vertices);
+    auto cube_edges = add_outer_edges_cube(num_rows, cube_vertices, graph);
 
     // Add edges from source
     //std::cout << "Adding edges from source:\n";
-    add_edges_without_intersection(s, cube_edges, num_rows, cube_vertices);
+    add_edges_without_intersection(s, cube_edges, num_rows, cube_vertices, geos_ctx, graph);
 
     // Add edges from end
     //std::cout << "\nAdding edges from end:\n";
-    add_edges_without_intersection(e, cube_edges, num_rows, cube_vertices);
+    add_edges_without_intersection(e, cube_edges, num_rows, cube_vertices, geos_ctx, graph);
 
     // A* search
-    std::vector<Point> path = astar_path(s, e);
+    std::vector<Point> path = astar_path(s, e, graph);
     
     if (!path.empty()) {
         std::cout << "\nShortest path found by A* algorithm:\n[";
@@ -287,23 +245,23 @@ int main() {
         Point e = arrToPoint(endp);
 
         // Add convex hull vertices as nodes
-        for (int i=0;i<num_rows;i++) add_node(vs[i]);
-        add_node(s);
-        add_node(e);
+        for (int i=0;i<num_rows;i++) add_node(vs[i], graph);
+        add_node(s, graph);
+        add_node(e, graph);
 
         // Add convex hull edges
-        cube_edges = add_outer_edges_cube(num_rows, cube_vertices);
+        cube_edges = add_outer_edges_cube(num_rows, cube_vertices, graph);
 
         // Add edges from source
         //std::cout << "Adding edges from source:\n";
-        add_edges_without_intersection(s, cube_edges, num_rows, cube_vertices);
+        add_edges_without_intersection(s, cube_edges, num_rows, cube_vertices, geos_ctx, graph);
 
         // Add edges from end
         //std::cout << "\nAdding edges from end:\n";
-        add_edges_without_intersection(e, cube_edges, num_rows, cube_vertices);
+        add_edges_without_intersection(e, cube_edges, num_rows, cube_vertices, geos_ctx, graph);
 
         // A* search
-        path = astar_path(s, e);
+        path = astar_path(s, e, graph);
         
         if (!path.empty()) {
             std::cout << "\nShortest path found by A* algorithm:\n[";
@@ -444,12 +402,6 @@ std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, 
                     if (depthValue == 0){
                         //std::cout << "[WARNING] depth value of x = " << x << ", y = " << y << " is invalid!" << std::endl;
                         continue; // ! TODO: make sure its ok to skip
-
-                        // Try to interpolate depth from neighboring pixels
-                        depthValue = interpolateDepth(depthImage, x, y);
-
-                        if (depthValue == 0)
-                            continue; // If still zero, skip the point
                     }
 
                     float Z = static_cast<float>(depthValue)*depthUnit; // Convert mm to meters
@@ -481,33 +433,6 @@ std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, 
     cv::destroyAllWindows(); // Explicitly close all OpenCV windows
 
     return finalOutput;
-}
-
-// TODO: redundant? Delete if yes
-ushort interpolateDepth(const cv::Mat& depthImage, int x, int y) {
-    int neighborhoodSize = 5;
-    int count = 0;
-    int sum = 0;
-
-    for (int dy = -neighborhoodSize; dy <= neighborhoodSize; ++dy) {
-        for (int dx = -neighborhoodSize; dx <= neighborhoodSize; ++dx) {
-            int nx = x + dx;
-            int ny = y + dy;
-            // Check bounds
-            if (nx >= 0 && nx < depthImage.cols && ny >= 0 && ny < depthImage.rows) {
-                ushort neighborDepth = depthImage.at<ushort>(ny, nx);
-                if (neighborDepth != 0) {
-                    sum += neighborDepth;
-                    ++count;
-                }
-            }
-        }
-    }
-
-    if (count > 0)
-        return static_cast<ushort>(sum / count);
-    else
-        return 0; // Unable to interpolate
 }
 
 /// Generating a final convex hull with as little vertices as possible from the gathered points
@@ -571,7 +496,7 @@ std::vector< std::array<double, 3> > analyzeCaptures( std::vector< std::array<fl
 
         // Add the points to the final output holder:
         x = x + newX;
-        y = -(y + newY);
+        y = -(y) + newY;
         finalOutput.push_back({x, y, Z});
 
         std::cout << "\t\tUniversal Point: X=" << x << "m, Y=" << y << "m, Z=" << Z + newZ << "m" << std::endl;
@@ -585,337 +510,45 @@ std::vector< std::array<double, 3> > analyzeCaptures( std::vector< std::array<fl
 
     std::cout << std::endl;
 
+    // -- Bringing all of the points to the same Z level --
+    // Find vertex with the smallest Z
+    auto min_it = std::min_element(
+        finalOutput.begin(), finalOutput.end(),
+        [](const std::array<double, 3>& a, const std::array<double, 3>& b) {
+            return a[2] < b[2];
+        }
+    );
+    std::cout << "\nMin Z. X: " << (*min_it)[0] << "  Y: " << (*min_it)[1] << "  Z: " << (*min_it)[2] << std::endl;
+
+    // Find normal with the camera position and the coordinate with the smallest Z
+    // Camera position is (newX, newY, newZ)
+    // point is (*min_it) = (x, y, Z)
+    // Normal = (camera position - point with the smallest Z)
+    std::array<double, 3> normal = {newX - (*min_it)[0], newY - (*min_it)[1], newZ - (*min_it)[2]};
+
+    // Find plane based on the point with the smallest Z and the normal
+    // Plane equation: Ax + By + Cz + D = 0
+    float Ax = normal[0];
+    float By = normal[1];
+    float Cz = normal[2];
+    float D = (Ax * -(*min_it)[0] + By * -(*min_it)[1] + Cz * -(*min_it)[2]);
+    std::cout << "Plane equation: " << Ax << "x + " << By << "y + " << Cz << "z + " << D << " = 0" << std::endl;
+
+    // Find intersection of the plane with every other point to create boundaries (vertices) of the final convex hull
+
+
     /*
     - Find normal(position of camera vs position of node with the smallest Z)
     - We find plane based on that point and normal
     - Find intersection of the plane with every other point to create boundaries (vertices) of the final convex hull
     */
 
+    for (const std::array<double, 3>& pt3D : finalOutput) {
+        std::cout << "\t\tUniversal Point: X=" << pt3D[0] << "m, Y=" << pt3D[1] << "m, Z=" << pt3D[2] + newZ << "m" << std::endl;
+    }
+
     // expandFrontSides(finalOutput, volume_increase_m, newZ);
 
     return finalOutput;
 }
-
-
-/// Converting an array into Point2f
-void arrayToPoint2f(std::vector< std::array<float, 3> >& gatheredPoints, std::vector<cv::Point2f>& gathered2fPoints){
-	for( const std::array<float, 3>& point : gatheredPoints){
-		gathered2fPoints.push_back( cv::Point2f(point[0], point[1]) );
-	}
-}
-
-
-/// Temprorary way to find the corresponding Z values
-float findMatchingValues(const cv::Point2f& pt, const std::vector<std::array<float, 3>>& arrayData, float tolerance) {
-    for (const auto& arr : arrayData) {
-        if (std::abs(pt.x - arr[0]) < tolerance && std::abs(pt.y - arr[1]) < tolerance) {
-            return arr[2];
-        }
-    }
-    return -1;
-}
-
-
-
-/// Graphing the points on the 2D image
-void graphPoints( const std::vector<cv::Point2f>& hull, cv::Mat displayImage, double minDepth, bool final ){
-    // Set up the display window and projection parameters
-    int width = 1280, height = 720;
-    cv::Mat image = displayImage.clone();
-
-    // Scale the circle size based on minimal depth of the object to simulate depth
-    int radius = static_cast<int>(3 / minDepth);
-    radius = std::max(1, std::min(20, radius));    // Clamp radius between 1 and 20
-    cv::Scalar color(255, 0, 0);
-    
-    // Draw each 3D point on the 2D image 
-    std::vector<cv::Point> vertices;
-    for (const cv::Point2f& pt2D : hull) {
-        // Project the 3D point onto the 2D image plane
-	    vertices.push_back(pt2D);
-
-        // std::cout << "\t\tPoint: X=" << pt2D.x << " Y=" << pt2D.y << " Z=" << minDepth << std::endl; 
-        cv::circle(image, pt2D, radius, color, -1);  // -1 fills the circle
-    }
-
-    // Display the result
-    if( final == true ){
-        cv::imshow("Final Hull", image);
-        cv::waitKey(0);
-    } else {
-        cv::imshow("All points combined", image);
-        // Draw contours
-    	cv::polylines(image, vertices, true, color, 2);
-    }
-
-}
-
-/// Projecting 3d points onto the 2d image plane
-void projectPoints(const std::vector< std::array<float, 7> >& hull, std::vector<cv::Point2f>& projectedPoints) {
-    // The structure: 0=X, 1=Y, 2=Z, 3=fx, 4=fy, 5=cx, 6=cy
-
-    // The procedure
-    for (const std::array<float, 7>& point : hull) {
-        // TODO: try subsituting point[2] with minDepth to get better results
-        float x = point[3] * (point[0] / point[2]) + point[5];
-        float y = point[4] * (point[1] / point[2]) + point[6];
-
-        projectedPoints.push_back(cv::Point2f(x, y));
-    }
-
-}
-
-// Function for calculating median
-double findMedian( std::vector<double> v, int n ){
-    // Sort the vector
-	std:sort(v.begin(), v.end());
-
-    // Check if the number of elements is odd
-    if (n % 2 != 0)
-        return (double)v[n / 2];
-
-    // If the number of elements is even, return the average
-    // of the two middle elements
-    return (double)(v[(n - 1) / 2] + v[n / 2]) / 2.0;
-}
-
-
-// Expands the bounding box of the front-facing points in X and Y by 'volume_increase_m'.
-void expandFrontSides(std::vector< std::array<double, 3> >& points, float volume_increase_m, float newZ) {
-    // Step 1: Identify bounding box in x,y for points in front of camera
-    float minX =  std::numeric_limits<float>::max();
-    float maxX = -std::numeric_limits<float>::max();
-    float minY =  std::numeric_limits<float>::max();
-    float maxY = -std::numeric_limits<float>::max();
-
-    // Only consider points with z > 0
-    for (const auto& p : points) {
-        if (p[0] < minX) minX = p[0];
-        if (p[0] > maxX) maxX = p[0];
-        if (p[1] < minY) minY = p[1];
-        if (p[1] > maxY) maxY = p[1];
-    }
-
-    // If failed to get a proper bounding box, do nothing
-    if (minX > maxX || minY > maxY) {
-        std::cout << "[ERROR] Failed to get a proper bounding box for expansion of the obstacle." << std::endl;
-        return;
-    }
-
-    float widthX = maxX - minX;  // original X width
-    float widthY = maxY - minY;  // original Y width
-    if (widthX <= 0.0f || widthY <= 0.0f) {
-        // Degenerate case: no real area to expand
-        std::cout << "[ERROR] Area of the obstacle is 0. Failed to get a proper bounding box for expansion of the obstacle." << std::endl;
-        return;
-    }
-
-    // Step 2: Compute the new (expanded) bounding box widths
-    float newWidthX = widthX + volume_increase_m;
-    float newWidthY = widthY + volume_increase_m;
-
-    // Step 3: Compute how much to scale X and Y around the center
-    float scaleX = newWidthX / widthX;
-    float scaleY = newWidthY / widthY;
-
-    float centerX = 0.5f * (minX + maxX);
-    float centerY = 0.5f * (minY + maxY);
-
-    // Step 4: Scale each front-facing point around (centerX, centerY).
-    for (auto& p : points) {
-        p[0] = centerX + (p[0] - centerX) * scaleX; // x
-        p[1] = centerY + (p[1] - centerY) * scaleY; // y
-        
-	p[2] = p[2] > 0.32 ? p[2] - 0.32 : 0; // z
-	p[2] += newZ;
-
-	std::cout << "current: " << p[2] << "\n";
-	std::cout << "newz: " << newZ << "\n\n";
-    }
-}
-
-
-
-
-// Shortest path finding components --------------------------------------------
-Point arrToPoint(const std::array<double, 3> arr) {
-    Point p; 
-    p.x=arr[0]; 
-    p.y=arr[1]; 
-    p.z=arr[2]; 
-    return p;
-}
-
-void add_node(const Point &p) {
-    if (graph.find(p)==graph.end()) graph[p]=std::vector<Edge>();
-}
-
-void add_edge(const Point &u, const Point &v, double w) {
-    graph[u].push_back({v,w});
-    graph[v].push_back({u,w});
-}
-
-
-std::string fmtPoint(const Point &p) {
-    std::ostringstream oss;
-    oss << "(" << p.x << ", " << p.y << ", " << p.z << ")";
-    return oss.str();
-}
-
-
-std::string fmtArray(const Point &p) {
-    std::ostringstream oss;
-    oss << "array([" << p.x << ", " << p.y << ", " << p.z << "])";
-    return oss.str();
-}
-
-std::string fmtEdgeAsArrays(const Point &p1, const Point &p2) {
-    std::ostringstream oss;
-    oss << "(" << fmtArray(p1) << ", " << fmtArray(p2) << ")";
-    return oss.str();
-}
-
-// Distance in 2D for weights
-double distance2D(const Point &a, const Point &b) {
-    double dx=a.x-b.x; double dy=a.y-b.y;
-    return std::sqrt(dx*dx+dy*dy);
-}
-
-// Distance in 3D for heuristic
-double distance3D(const Point &a, const Point &b) {
-    double dx=a.x-b.x; double dy=a.y-b.y; double dz=a.z-b.z;
-    return std::sqrt(dx*dx+dy*dy+dz*dz);
-}
-
-// Use GEOS to check intersection
-bool segments_intersect_no_touches_geos(const Point &A, const Point &B, const Point &C, const Point &D) {
-    // Create line segment for AB
-    GEOSCoordSequence* seq1 = GEOSCoordSeq_create_r(geos_ctx, 2, 2);
-    GEOSCoordSeq_setXY_r(geos_ctx, seq1, 0, A.x, A.y);
-    GEOSCoordSeq_setXY_r(geos_ctx, seq1, 1, B.x, B.y);
-    GEOSGeometry* line1 = GEOSGeom_createLineString_r(geos_ctx, seq1);
-
-    // Create line segment for CD
-    GEOSCoordSequence* seq2 = GEOSCoordSeq_create_r(geos_ctx, 2, 2);
-    GEOSCoordSeq_setXY_r(geos_ctx, seq2, 0, C.x, C.y);
-    GEOSCoordSeq_setXY_r(geos_ctx, seq2, 1, D.x, D.y);
-    GEOSGeometry* line2 = GEOSGeom_createLineString_r(geos_ctx, seq2);
-
-    char intersects = GEOSIntersects_r(geos_ctx, line1, line2);
-    char touches = GEOSTouches_r(geos_ctx, line1, line2);
-
-    bool result = false;
-    if (intersects && !touches) {
-        result = true;
-    }
-
-    GEOSGeom_destroy_r(geos_ctx, line1);
-    GEOSGeom_destroy_r(geos_ctx, line2);
-
-    return result;
-}
-
-// Connect consecutive convex hull points.
-std::vector<std::pair<Point,Point>> add_outer_edges_cube(int num_rows, std::vector< std::array<double, 3> > cube_vertices) {
-    Point vs[num_rows];
-    for (int i=0;i<num_rows;i++) vs[i]=arrToPoint(cube_vertices[i]);
-    std::vector<std::pair<Point,Point>> edges;
-    for (int i=0; i<num_rows; i++) {
-        int j = (i + 1) % num_rows;
-        edges.push_back({vs[i], vs[j]});
-        double w = distance2D(vs[i], vs[j]);
-        add_edge(vs[i], vs[j], w);
-    }
-    return edges;
-}
-
-void add_edges_without_intersection(const Point &point, const std::vector<std::pair<Point,Point>> &cube_edges, int num_rows, std::vector< std::array<double, 3> > cube_vertices) {
-    Point vs[num_rows];
-    for (int i=0;i<num_rows;i++) vs[i]=arrToPoint(cube_vertices[i]);
-
-    for (int i=0;i<num_rows;i++) {
-        Point vertex = vs[i];
-        bool intersects = false;
-        for (auto &ce: cube_edges) {
-            if (segments_intersect_no_touches_geos(point, vertex, ce.first, ce.second)) {
-                //std::cout << "Edge from " << fmtPoint(point) << " to " << fmtPoint(vertex)
-                //          << " intersects with cube edge " << fmtEdgeAsArrays(ce.first, ce.second) << "\n";
-                intersects = true;
-                break;
-            }
-        }
-        if (!intersects) {
-            double w = distance2D(point, vertex);
-            add_edge(point, vertex, w);
-            //std::cout << "Added edge from " << fmtPoint(point) << " to " << fmtPoint(vertex) << "\n";
-        }
-    }
-}
-
-std::vector<Point> astar_path(const Point &start, const Point &goal) {
-    std::map<Point,double> gScore;
-    std::map<Point,double> fScore;
-    std::map<Point,Point> cameFrom;
-
-    for (auto &kv: graph) {
-        gScore[kv.first] = std::numeric_limits<double>::infinity();
-        fScore[kv.first] = std::numeric_limits<double>::infinity();
-    }
-
-    gScore[start] = 0.0;
-    fScore[start] = distance3D(start, goal);
-
-   
-    static long long counter = 0;
-
-    struct PQItem {
-        Point node;
-        double f;
-        long long order;
-        bool operator>(const PQItem &o) const {
-            if (f == o.f) return order > o.order;
-            return f > o.f;
-        }
-    };
-
-    std::priority_queue<PQItem, std::vector<PQItem>, std::greater<PQItem>> openSet;
-    openSet.push({start, fScore[start], counter++});
-    std::map<Point, bool> inOpen;
-    inOpen[start] = true;
-
-    while (!openSet.empty()) {
-        Point current = openSet.top().node;
-        openSet.pop();
-        inOpen[current] = false;
-
-        if (current == goal) {
-            std::vector<Point> path;
-            Point cur = current;
-            while (!(cur == start)) {
-                path.push_back(cur);
-                cur = cameFrom[cur];
-            }
-            path.push_back(start);
-            std::reverse(path.begin(), path.end());
-            return path;
-        }
-
-        for (auto &edge: graph[current]) {
-            Point neighbor = edge.node;
-            double tentative = gScore[current] + edge.weight;
-            if (tentative < gScore[neighbor]) {
-                cameFrom[neighbor] = current;
-                gScore[neighbor] = tentative;
-                fScore[neighbor] = tentative + distance3D(neighbor, goal);
-                if (!inOpen[neighbor]) {
-                    openSet.push({neighbor, fScore[neighbor], counter++});
-                    inOpen[neighbor] = true;
-                }
-            }
-        }
-    }
-
-    return {};
-}
-// -------------------------------------------------------------------------
 
