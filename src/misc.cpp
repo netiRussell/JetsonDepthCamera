@@ -146,7 +146,7 @@ void expandFrontSides(std::vector< std::array<double, 3> >& points, float volume
         p[0] = centerX + (p[0] - centerX) * scaleX; // x
         p[1] = centerY + (p[1] - centerY) * scaleY; // y
         
-	p[2] = p[2] > 0.32 ? p[2] - 0.32 : 0; // z
+	p[2] = p[2] > 0.35 ? p[2] - 0.35 : p[2]; // z
 	p[2] += newZ;
 
 	std::cout << "current: " << p[2] << "\n";

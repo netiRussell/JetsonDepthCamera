@@ -26,10 +26,11 @@ std::map<Point, std::vector<Edge>> graph;
 // Create a global GEOS context
 GEOSContextHandle_t geos_ctx = nullptr;
 
-
 std::vector< std::array<double, 3> > analyzeCaptures( std::vector< std::array<float, 3> >& gatheredPoints, double minDepth, cv::Mat displayImage, float fx, float fy, float cx, float cy, float newX, float newY, float newZ, float volume_increase_m);
 
 std::vector< std::array<double, 3> > generateConvexHull(const int num_captures, const int minDepth, const int maxDepth, std::shared_ptr<dai::DataOutputQueue> depthQueue, float fx, float fy, float cx, float cy, float depthUnit, float newX, float newY, float newZ, float volume_increase_m);
+
+std::array<double, 3> projectPointOntoPlane(const std::array<double, 3>& P,  const std::array<double, 3>& P0, const std::array<double, 3>& n);
 
 struct HullData {
     std::vector<cv::Point> hull;
@@ -150,7 +151,7 @@ int main() {
     std::vector< std::array<double, 3> > cube_vertices = generateConvexHull(num_captures, minDepth, maxDepth, depthQueue, fx, fy, cx, cy, depthUnit, 0, 0, 0, volume_increase_m);
 
     // Get the size of the first dimension (number of rows)
-    int num_rows = sizeof(cube_vertices) / sizeof(cube_vertices[0]);
+    int num_rows = cube_vertices.size();
 
     // Initialize GEOS
     geos_ctx = GEOS_init_r();
@@ -231,7 +232,6 @@ int main() {
         } else{
             break;
         }
-
 	
 	// Get the size of the first dimension (number of rows)
     	num_rows = cube_vertices.size();
@@ -502,11 +502,6 @@ std::vector< std::array<double, 3> > analyzeCaptures( std::vector< std::array<fl
         std::cout << "\t\tUniversal Point: X=" << x << "m, Y=" << y << "m, Z=" << Z + newZ << "m" << std::endl;
         
     }
-    
-
-    // Display the result
-    cv::imshow("Just the final points", image);
-    cv::waitKey(0);
 
     std::cout << std::endl;
 
@@ -526,29 +521,45 @@ std::vector< std::array<double, 3> > analyzeCaptures( std::vector< std::array<fl
     // Normal = (camera position - point with the smallest Z)
     std::array<double, 3> normal = {newX - (*min_it)[0], newY - (*min_it)[1], newZ - (*min_it)[2]};
 
-    // Find plane based on the point with the smallest Z and the normal
-    // Plane equation: Ax + By + Cz + D = 0
-    float Ax = normal[0];
-    float By = normal[1];
-    float Cz = normal[2];
-    float D = (Ax * -(*min_it)[0] + By * -(*min_it)[1] + Cz * -(*min_it)[2]);
-    std::cout << "Plane equation: " << Ax << "x + " << By << "y + " << Cz << "z + " << D << " = 0" << std::endl;
-
     // Find intersection of the plane with every other point to create boundaries (vertices) of the final convex hull
+    for (int i = 0; i < finalOutput.size(); i++)
+    {
+        std::cout << "\tUniversal Point: X=" << finalOutput[i][0] << "m, Y=" << finalOutput[i][1] << "m, Z=" << finalOutput[i][2] + newZ << "m" << std::endl;
 
+        finalOutput[i] = projectPointOntoPlane( finalOutput[i], *min_it, normal );
 
-    /*
-    - Find normal(position of camera vs position of node with the smallest Z)
-    - We find plane based on that point and normal
-    - Find intersection of the plane with every other point to create boundaries (vertices) of the final convex hull
-    */
-
-    for (const std::array<double, 3>& pt3D : finalOutput) {
-        std::cout << "\t\tUniversal Point: X=" << pt3D[0] << "m, Y=" << pt3D[1] << "m, Z=" << pt3D[2] + newZ << "m" << std::endl;
+        std::cout << "\Changed Point: X=" << finalOutput[i][0] << "m, Y=" << finalOutput[i][1] << "m, Z=" << finalOutput[i][2] + newZ << "m" << std::endl;
+        std::cout << "\n";
     }
 
-    // expandFrontSides(finalOutput, volume_increase_m, newZ);
+    expandFrontSides(finalOutput, volume_increase_m, newZ);
+
+    // Display the result
+    cv::imshow("Just the final points", image);
+    cv::waitKey(0);
 
     return finalOutput;
 }
 
+
+// Project point P onto the plane defined by point P0 and normal n
+std::array<double, 3> projectPointOntoPlane(const std::array<double, 3>& P,  const std::array<double, 3>& P0, const std::array<double, 3>& n) {
+    // (P - P0) dot n
+    std::array<double, 3> holder = {P[0] - P0[0], P[1] - P0[1], P[2] - P0[2]};
+    double numerator = holder[0]*n[0] + holder[1]*n[1] + holder[2]*n[2];
+
+    // n dot n
+    double denominator = n[0]*n[0] + n[1]*n[1] + n[2]*n[2];
+
+    // If denominator is zero, that means n = (0,0,0) ==> plane normal is invalid
+    if (std::fabs(denominator) < 1e-9) {
+        // Return P unchanged
+        return P;
+    }
+
+    double t = -numerator / denominator;
+
+    // Intersection point = P + (n * t)
+    holder = {P[0] + (n[0] * t), P[1] + (n[1] * t), P[2] + (n[2] * t)};
+    return holder;
+}

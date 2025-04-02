@@ -23,11 +23,11 @@ Point arrToPoint(const std::array<double, 3> arr) {
   return p;
 }
 
-void add_node(const Point &p, std::map<Point, std::vector<Edge>> graph) {
+void add_node(const Point &p, std::map<Point, std::vector<Edge>>& graph) {
   if (graph.find(p)==graph.end()) graph[p]=std::vector<Edge>();
 }
 
-void add_edge(const Point &u, const Point &v, double w, std::map<Point, std::vector<Edge>> graph) {
+void add_edge(const Point &u, const Point &v, double w, std::map<Point, std::vector<Edge>>& graph) {
   graph[u].push_back({v,w});
   graph[v].push_back({u,w});
 }
@@ -93,7 +93,7 @@ bool segments_intersect_no_touches_geos(const Point &A, const Point &B, const Po
 }
 
 // Connect consecutive convex hull points.
-std::vector<std::pair<Point,Point>> add_outer_edges_cube(int num_rows, std::vector< std::array<double, 3> > cube_vertices, std::map<Point, std::vector<Edge>> graph) {
+std::vector<std::pair<Point,Point>> add_outer_edges_cube(int num_rows, std::vector< std::array<double, 3> > cube_vertices, std::map<Point, std::vector<Edge>>& graph) {
   Point vs[num_rows];
   for (int i=0;i<num_rows;i++) vs[i]=arrToPoint(cube_vertices[i]);
   std::vector<std::pair<Point,Point>> edges;
@@ -106,7 +106,7 @@ std::vector<std::pair<Point,Point>> add_outer_edges_cube(int num_rows, std::vect
   return edges;
 }
 
-void add_edges_without_intersection(const Point &point, const std::vector<std::pair<Point,Point>> &cube_edges, int num_rows, std::vector< std::array<double, 3> > cube_vertices, GEOSContextHandle_t geos_ctx, std::map<Point, std::vector<Edge>> graph) {
+void add_edges_without_intersection(const Point &point, const std::vector<std::pair<Point,Point>> &cube_edges, int num_rows, std::vector< std::array<double, 3> > cube_vertices, GEOSContextHandle_t geos_ctx, std::map<Point, std::vector<Edge>>& graph) {
   Point vs[num_rows];
   for (int i=0;i<num_rows;i++) vs[i]=arrToPoint(cube_vertices[i]);
 
@@ -129,7 +129,7 @@ void add_edges_without_intersection(const Point &point, const std::vector<std::p
   }
 }
 
-std::vector<Point> astar_path(const Point &start, const Point &goal, std::map<Point, std::vector<Edge>> graph) {
+std::vector<Point> astar_path(const Point &start, const Point &goal, std::map<Point, std::vector<Edge>>& graph) {
   std::map<Point,double> gScore;
   std::map<Point,double> fScore;
   std::map<Point,Point> cameFrom;
